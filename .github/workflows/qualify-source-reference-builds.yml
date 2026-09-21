@@ -87,7 +87,11 @@ jobs:
           sdk_root="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
           ndk="$sdk_root/ndk/$NDK_VERSION"
           if [ ! -d "$ndk" ]; then
+            set +o pipefail
             yes | "$sdk_root/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION" >/dev/null
+            sdk_rc=${PIPESTATUS[1]}
+            set -o pipefail
+            test "$sdk_rc" -eq 0
           fi
           test -x "$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${ANDROID_API}-clang"
           echo "NDK_ROOT=$ndk" >> "$GITHUB_ENV"
