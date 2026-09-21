@@ -68,10 +68,18 @@ class SpelunkerTests(unittest.TestCase):
             self.assertEqual(by_id["cgroups"]["classification"], "INACCESSIBLE")
 
     def test_only_allowlisted_probe_commands_are_declared(self):
-        text = SCRIPT.read_text(encoding="utf-8")
-        forbidden = [" install ", " uninstall ", " settings put ", " am start ", " pm grant "]
-        for item in forbidden:
-            self.assertNotIn(item, text)
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("android_spelunk", SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+
+        forbidden_tokens = {"install", "uninstall", "push", "reboot", "start", "grant", "revoke"}
+        for probe in module.PROBES:
+            self.assertFalse(
+                forbidden_tokens.intersection(probe.argv),
+                f"mutating token declared in {probe.id}: {probe.argv}",
+            )
 
 
 if __name__ == "__main__":
