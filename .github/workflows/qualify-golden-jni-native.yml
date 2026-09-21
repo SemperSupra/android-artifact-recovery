@@ -35,8 +35,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          yes | sdkmanager --licenses >/dev/null
-          sdkmanager "ndk;27.0.12077973" "cmake;3.22.1"
+          sdk_root="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          sdkmanager_path="$(find "$sdk_root" -type f -name sdkmanager | sort | tail -n1)"
+          test -x "$sdkmanager_path"
+          "$sdkmanager_path" "ndk;27.0.12077973" "cmake;3.22.1"
 
       - name: Run host behavioral oracle
         shell: bash
