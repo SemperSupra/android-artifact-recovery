@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sempersupra.org/aar/reference-component.schema.json",
+  "title": "AAR Reference Component Catalog",
+  "type": "object",
+  "required": ["schema", "references"],
+  "properties": {
+    "schema": {
+      "const": "aar-reference-catalog/v0"
+    },
+    "references": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "component_id",
+          "name",
+          "version",
+          "provenance_class",
+          "source_ref"
+        ],
+        "properties": {
+          "component_id": {"type": "string"},
+          "name": {"type": "string"},
+          "version": {"type": ["string", "null"]},
+          "purl": {"type": ["string", "null"]},
+          "provenance_class": {
+            "enum": ["R0", "R1", "R2", "R3", "R4", "R5"]
+          },
+          "source_ref": {"type": "string"},
+          "source_sha256": {
+            "type": ["string", "null"],
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "binaries": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["sha256", "kind"],
+              "properties": {
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "kind": {"enum": ["dex", "elf", "javascript", "wasm", "archive", "other"]},
+                "abi": {"type": ["string", "null"]},
+                "logical_name": {"type": ["string", "null"]}
+              },
+              "additionalProperties": true
+            }
+          },
+          "metadata": {
+            "type": "object",
+            "properties": {
+              "sonames": {"type": "array", "items": {"type": "string"}},
+              "build_ids": {"type": "array", "items": {"type": "string"}},
+              "namespaces": {"type": "array", "items": {"type": "string"}},
+              "package_coordinates": {"type": "array", "items": {"type": "string"}},
+              "version_strings": {"type": "array", "items": {"type": "string"}},
+              "license_notices": {"type": "array", "items": {"type": "string"}}
+            },
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": false
+}
