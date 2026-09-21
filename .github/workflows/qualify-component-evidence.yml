@@ -1,0 +1,27 @@
+name: Qualify cheap component evidence
+
+on:
+  pull_request:
+    paths:
+      - schemas/reference-request.schema.json
+      - tools/extract_component_evidence.py
+      - tools/resolve_reference_catalog.py
+      - tests/test_component_evidence.py
+      - docs/recovery/component-evidence.md
+      - .github/workflows/qualify-component-evidence.yml
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse schemas
+        run: python3 -c "import json; json.load(open('schemas/reference-request.schema.json'))"
+      - name: Run qualification fixtures
+        run: python3 -m unittest -v tests/test_component_evidence.py
