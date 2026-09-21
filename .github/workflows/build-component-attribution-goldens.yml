@@ -1,0 +1,114 @@
+name: Build component attribution goldens
+
+on:
+  pull_request:
+    paths:
+      - goldens/component-attribution/**
+      - .github/workflows/build-component-attribution-goldens.yml
+  push:
+    branches: [main]
+    paths:
+      - goldens/component-attribution/**
+      - .github/workflows/build-component-attribution-goldens.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Resolve Android D8
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk_root="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          d8="$(find "$sdk_root/build-tools" -type f -name d8 | sort -V | tail -n1)"
+          test -x "$d8"
+          echo "D8=$d8" >> "$GITHUB_ENV"
+          "$d8" --version
+
+      - name: Build native adversarial variants
+        shell: bash
+        working-directory: goldens/component-attribution/native
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          cc -shared -fPIC -O2 -Wl,-soname,libaarknown.so -o build/libaarknown.so known_component.c
+          cp build/libaarknown.so build/libaarknown-exact-copy.so
+          cc -shared -fPIC -O0 -Wl,-soname,libaarknown.so -o build/libaarknown-o0.so known_component.c
+          cp build/libaarknown.so build/libaarknown-stripped.so
+          strip --strip-unneeded build/libaarknown-stripped.so
+          cc -shared -fPIC -O2 -Wl,-soname,libaarknown.so -o build/libaarknown-patched.so patched_component.c
+          cc -shared -fPIC -O2 -Wl,-soname,libaarknown.so -o build/libaarknown-false-friend.so false_friend.c
+          sha256sum build/*.so | sort | tee build/sha256.txt
+
+      - name: Validate native relationships
+        shell: bash
+        working-directory: goldens/component-attribution/native
+        run: |
+          set -euo pipefail
+          base="$(sha256sum build/libaarknown.so | cut -d' ' -f1)"
+          exact="$(sha256sum build/libaarknown-exact-copy.so | cut -d' ' -f1)"
+          o0="$(sha256sum build/libaarknown-o0.so | cut -d' ' -f1)"
+          stripped="$(sha256sum build/libaarknown-stripped.so | cut -d' ' -f1)"
+          patched="$(sha256sum build/libaarknown-patched.so | cut -d' ' -f1)"
+          false_friend="$(sha256sum build/libaarknown-false-friend.so | cut -d' ' -f1)"
+          test "$base" = "$exact"
+          test "$base" != "$o0"
+          test "$base" != "$stripped"
+          test "$base" != "$patched"
+          test "$base" != "$false_friend"
+
+      - name: Build DEX adversarial variants
+        shell: bash
+        working-directory: goldens/component-attribution/dex
+        run: |
+          set -euo pipefail
+          rm -rf build
+          mkdir -p build/classes-known build/classes-patched build/classes-false build/classes-shaded
+          javac -d build/classes-known known/org/sempersupra/aar/attribknown/KnownCodec.java
+          javac -d build/classes-patched patched/org/sempersupra/aar/attribknown/KnownCodec.java
+          javac -d build/classes-false false-friend/org/sempersupra/aar/attribknown/KnownCodec.java
+          javac -d build/classes-shaded shaded/org/sempersupra/shadow/attribknown/KnownCodec.java
+          for variant in known patched false shaded; do mkdir -p "build/dex-$variant"; done
+          "$D8" --min-api 26 --output build/dex-known build/classes-known/org/sempersupra/aar/attribknown/KnownCodec.class
+          cp build/dex-known/classes.dex build/dex-known/classes-exact-copy.dex
+          "$D8" --min-api 26 --output build/dex-patched build/classes-patched/org/sempersupra/aar/attribknown/KnownCodec.class
+          "$D8" --min-api 26 --output build/dex-false build/classes-false/org/sempersupra/aar/attribknown/KnownCodec.class
+          "$D8" --min-api 26 --output build/dex-shaded build/classes-shaded/org/sempersupra/shadow/attribknown/KnownCodec.class
+          find build -type f -name '*.dex' -print0 | sort -z | xargs -0 sha256sum | tee build/sha256.txt
+
+      - name: Validate DEX relationships
+        shell: bash
+        working-directory: goldens/component-attribution/dex
+        run: |
+          set -euo pipefail
+          base="$(sha256sum build/dex-known/classes.dex | cut -d' ' -f1)"
+          exact="$(sha256sum build/dex-known/classes-exact-copy.dex | cut -d' ' -f1)"
+          patched="$(sha256sum build/dex-patched/classes.dex | cut -d' ' -f1)"
+          false_friend="$(sha256sum build/dex-false/classes.dex | cut -d' ' -f1)"
+          shaded="$(sha256sum build/dex-shaded/classes.dex | cut -d' ' -f1)"
+          test "$base" = "$exact"
+          test "$base" != "$patched"
+          test "$base" != "$false_friend"
+          test "$base" != "$shaded"
+
+      - name: Publish attribution interview corpus
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: aar-component-attribution-goldens
+          path: |
+            goldens/component-attribution/native/build/
+            goldens/component-attribution/dex/build/
+          if-no-files-found: error
+          retention-days: 14
