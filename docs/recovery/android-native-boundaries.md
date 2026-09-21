@@ -25,3 +25,18 @@ OEM behavior, Android release, or device implementation are proven.
 
 Boundary callers, imported symbols, configuration, error handling, and
 application behavior remain in recovery scope.
+
+## Evidence-driven platform expansion
+
+The first Smart Life boundary run left several well-known Android NDK linkage
+surfaces in `UNRESOLVED_EXTERNAL`. The allowlist is therefore expanded only
+for observed, public NDK/platform interfaces:
+
+- EGL and GLES 1/2/3 loader/API surfaces;
+- `libjnigraphics`;
+- OpenSL ES.
+
+The legacy `libstdc++.so` edge is intentionally weaker: it is classified as an
+NDK/system runtime candidate rather than exact platform implementation.
+
+Vendor/runtime-specific names such as `libv8_libfull.cr.so` remain unresolved.
