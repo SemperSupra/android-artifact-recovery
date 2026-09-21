@@ -3,7 +3,7 @@ import java.util.Base64;
 import org.sempersupra.aar.golden.kotlin.GoldenRecordFingerprint;
 
 public final class GoldenFingerprintHarness {
-    public static void main(String[] args) {
+    public static void main(String[] args) throws Exception {
         String input =
             "# AAR sample\n" +
             " Beta = two   words\n" +
