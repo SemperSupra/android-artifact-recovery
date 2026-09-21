@@ -1,0 +1,115 @@
+name: Qualify Ghidra FID on DEX
+
+on:
+  pull_request:
+    paths:
+      - tools/evaluate_ghidra_fid_dex_goldens.py
+      - docs/recovery/ghidra-fid-dex-qualification.md
+      - .github/workflows/qualify-ghidra-fid-dex.yml
+      - tools/ghidra/AarFidHashes.java
+      - goldens/component-attribution/dex/**
+  push:
+    branches: [main]
+    paths:
+      - tools/evaluate_ghidra_fid_dex_goldens.py
+      - docs/recovery/ghidra-fid-dex-qualification.md
+      - .github/workflows/qualify-ghidra-fid-dex.yml
+      - tools/ghidra/AarFidHashes.java
+      - goldens/component-attribution/dex/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      GHIDRA_ZIP: ghidra_12.1.4_PUBLIC_20260921.zip
+      GHIDRA_URL: https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.1.4_build/ghidra_12.1.4_PUBLIC_20260921.zip
+      GHIDRA_SHA256: ddac49f903da9d5bac833e5cc79395098b9c33cfd3279be5f31bd00387d2d4db
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Resolve Android D8
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk_root="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          d8="$(find "$sdk_root/build-tools" -type f -name d8 | sort -V | tail -n1)"
+          test -x "$d8"
+          echo "D8=$d8" >> "$GITHUB_ENV"
+
+      - name: Build DEX interview variants
+        shell: bash
+        working-directory: goldens/component-attribution/dex
+        run: |
+          set -euo pipefail
+          rm -rf build
+          mkdir -p build/classes-known build/classes-patched build/classes-false build/classes-shaded
+          javac -d build/classes-known known/org/sempersupra/aar/attribknown/KnownCodec.java
+          javac -d build/classes-patched patched/org/sempersupra/aar/attribknown/KnownCodec.java
+          javac -d build/classes-false false-friend/org/sempersupra/aar/attribknown/KnownCodec.java
+          javac -d build/classes-shaded shaded/org/sempersupra/shadow/attribknown/KnownCodec.java
+          for variant in known patched false-friend shaded; do mkdir -p "build/dex-$variant"; done
+          "$D8" --min-api 26 --output build/dex-known build/classes-known/org/sempersupra/aar/attribknown/KnownCodec.class
+          cp build/dex-known/classes.dex build/dex-known/classes-exact-copy.dex
+          "$D8" --min-api 26 --output build/dex-patched build/classes-patched/org/sempersupra/aar/attribknown/KnownCodec.class
+          "$D8" --min-api 26 --output build/dex-false-friend build/classes-false/org/sempersupra/aar/attribknown/KnownCodec.class
+          "$D8" --min-api 26 --output build/dex-shaded build/classes-shaded/org/sempersupra/shadow/attribknown/KnownCodec.class
+          find build -type f -name '*.dex' -print0 | sort -z | xargs -0 sha256sum | tee build/sha256.txt
+
+      - name: Download and verify official Ghidra release
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 --retry-all-errors "$GHIDRA_URL" -o "$RUNNER_TEMP/$GHIDRA_ZIP"
+          echo "$GHIDRA_SHA256  $RUNNER_TEMP/$GHIDRA_ZIP" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/ghidra"
+          unzip -q "$RUNNER_TEMP/$GHIDRA_ZIP" -d "$RUNNER_TEMP/ghidra"
+          ghidra_dir="$(find "$RUNNER_TEMP/ghidra" -mindepth 1 -maxdepth 1 -type d -name 'ghidra_*' -print -quit)"
+          test -x "$ghidra_dir/support/analyzeHeadless"
+          echo "GHIDRA_DIR=$ghidra_dir" >> "$GITHUB_ENV"
+
+      - name: Analyze DEX variants and emit FID hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/dex-fid "$RUNNER_TEMP/aar-ghidra-dex-projects"
+
+          declare -A files=(
+            [known]="$GITHUB_WORKSPACE/goldens/component-attribution/dex/build/dex-known/classes.dex"
+            [exact-copy]="$GITHUB_WORKSPACE/goldens/component-attribution/dex/build/dex-known/classes-exact-copy.dex"
+            [patched]="$GITHUB_WORKSPACE/goldens/component-attribution/dex/build/dex-patched/classes.dex"
+            [false-friend]="$GITHUB_WORKSPACE/goldens/component-attribution/dex/build/dex-false-friend/classes.dex"
+            [shaded]="$GITHUB_WORKSPACE/goldens/component-attribution/dex/build/dex-shaded/classes.dex"
+          )
+
+          for variant in known exact-copy patched false-friend shaded; do
+            input="${files[$variant]}"
+            project="aar_dex_${variant//[^A-Za-z0-9_]/_}"
+            "$GHIDRA_DIR/support/analyzeHeadless"               "$RUNNER_TEMP/aar-ghidra-dex-projects" "$project"               -import "$input"               -scriptPath "$GITHUB_WORKSPACE/tools/ghidra"               -postScript AarFidHashes.java "$GITHUB_WORKSPACE/out/dex-fid/$variant.fid.json"               -analysisTimeoutPerFile 120               -max-cpu 2               -deleteProject
+          done
+
+      - name: Evaluate DEX FID behavior
+        run: |
+          python3 tools/evaluate_ghidra_fid_dex_goldens.py             --evidence-dir out/dex-fid             --out out/ghidra-fid-dex-qualification.json
+
+      - name: Publish DEX FID qualification evidence
+        if: always() && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: aar-ghidra-fid-dex-qualification
+          path: |
+            out/dex-fid/*.json
+            out/ghidra-fid-dex-qualification.json
+            goldens/component-attribution/dex/build/sha256.txt
+          if-no-files-found: warn
+          retention-days: 14
