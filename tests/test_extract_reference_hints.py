@@ -56,9 +56,9 @@ class ReferenceHintTests(unittest.TestCase):
             root = pathlib.Path(td)
             apk = root / "sample.apk"
             elf = (
-                b"\\x7fELF" + b"\\x00" * 128 +
-                b"FFmpeg version 4.4.2 Copyright..." + b"\\x00" +
-                b"Use FFmpeg version to configure this component" + b"\\x00"
+                b"\x7fELF" + b"\x00" * 128 +
+                b"FFmpeg version 4.4.2 Copyright..." + b"\x00" +
+                b"Use FFmpeg version to configure this component" + b"\x00"
             )
             with zipfile.ZipFile(apk, "w") as z:
                 z.writestr("lib/arm64-v8a/libavutil.so", elf)
