@@ -1,0 +1,349 @@
+name: Qualify AAR Kotlin golden end-to-end
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/qualify-kotlin-golden-e2e.yml'
+      - 'docs/recovery/kotlin-golden-e2e.md'
+      - 'tools/recover_apk_static.py'
+      - 'tools/probe_rebuild.py'
+      - 'tools/compare_behavior.py'
+      - 'tools/repair_jadx_kotlin_java.py'
+      - 'tools/summarize_recovery_evidence.py'
+      - 'tests/fixtures/GoldenFingerprintHarness.java'
+      - 'goldens/kotlin-dex/**'
+  push:
+    branches:
+      - main
+      - mvp/e2e-kotlin-golden
+    paths:
+      - '.github/workflows/qualify-kotlin-golden-e2e.yml'
+      - 'tools/recover_apk_static.py'
+      - 'tools/probe_rebuild.py'
+      - 'tools/compare_behavior.py'
+      - 'tools/repair_jadx_kotlin_java.py'
+      - 'tools/summarize_recovery_evidence.py'
+      - 'tests/fixtures/GoldenFingerprintHarness.java'
+      - 'goldens/kotlin-dex/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+
+      - name: Build source-known Kotlin golden
+        working-directory: goldens/kotlin-dex
+        run: gradle --no-daemon assembleRelease
+
+      - name: Resolve source-known artifact and JVM oracle classpath
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/evidence
+          apk="$(find goldens/kotlin-dex/app/build/outputs/apk/release -type f -name '*.apk' -print -quit)"
+          test -f "$apk"
+          apk_sha="$(sha256sum "$apk" | awk '{print $1}')"
+          echo "$apk_sha  $apk" | tee out/evidence/original-apk.sha256
+          echo "APK=$apk" >> "$GITHUB_ENV"
+          echo "APK_SHA=$apk_sha" >> "$GITHUB_ENV"
+
+          class_file="$(find goldens/kotlin-dex/app/build -type f -path '*/org/sempersupra/aar/golden/kotlin/GoldenRecordFingerprint.class' -print -quit)"
+          test -n "$class_file"
+          class_root="$(python3 - "$class_file" <<'PY'
+          import pathlib, sys
+          p = pathlib.Path(sys.argv[1]).resolve()
+          print(p.parents[5])
+          PY
+          )"
+          stdlib="$(find "$HOME/.gradle/caches/modules-2/files-2.1/org.jetbrains.kotlin/kotlin-stdlib" -type f -name 'kotlin-stdlib-2.0.21.jar' -print -quit)"
+          annotations="$(find "$HOME/.gradle/caches/modules-2/files-2.1/org.jetbrains/annotations" -type f -name '*.jar' ! -name '*sources*' -print -quit || true)"
+          test -d "$class_root"
+          test -f "$stdlib"
+          echo "ORIGINAL_CLASSES=$class_root" >> "$GITHUB_ENV"
+          echo "KOTLIN_STDLIB=$stdlib" >> "$GITHUB_ENV"
+          echo "JETBRAINS_ANNOTATIONS=$annotations" >> "$GITHUB_ENV"
+
+      - name: Install pinned JADX and resolve DEX tool
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 \
+            https://github.com/skylot/jadx/releases/download/v1.5.6/jadx-1.5.6.zip \
+            -o "$RUNNER_TEMP/jadx.zip"
+          sha256sum "$RUNNER_TEMP/jadx.zip" | tee out/evidence/jadx.zip.sha256
+          unzip -q "$RUNNER_TEMP/jadx.zip" -d "$RUNNER_TEMP/jadx"
+          dexdump="$(find "${ANDROID_HOME:-/usr/local/lib/android/sdk}" -type f -name dexdump | sort -V | tail -n1)"
+          test -x "$dexdump"
+          echo "JADX=$RUNNER_TEMP/jadx/bin/jadx" >> "$GITHUB_ENV"
+          echo "DEXDUMP=$dexdump" >> "$GITHUB_ENV"
+
+      - name: Recover static DEX representations
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/recover_apk_static.py "$APK" \
+            --out out/static \
+            --jadx "$JADX" \
+            --dexdump "$DEXDUMP"
+          cp out/static/recovery-manifest.json out/evidence/static-recovery.json
+
+      - name: Export and probe unmodified recovered Gradle project
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          "$JADX" \
+            --export-gradle \
+            --export-gradle-type android-app \
+            -d out/recovered-gradle \
+            "$APK" \
+            >out/evidence/jadx-export.stdout.txt \
+            2>out/evidence/jadx-export.stderr.txt
+          export_rc=$?
+          set -e
+          echo "$export_rc" > out/evidence/jadx-export.returncode.txt
+          test -d out/recovered-gradle
+          find out/recovered-gradle -type f | sort > out/evidence/recovered-gradle-files.txt
+          test -s out/evidence/recovered-gradle-files.txt
+
+          python3 tools/probe_rebuild.py \
+            --project out/recovered-gradle \
+            --output out/evidence/rebuild-report.json \
+            -- \
+            gradle --no-daemon assembleDebug
+
+      - name: Execute source-known behavioral oracle
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp="$ORIGINAL_CLASSES:$KOTLIN_STDLIB"
+          if [ -n "$JETBRAINS_ANNOTATIONS" ]; then cp="$cp:$JETBRAINS_ANNOTATIONS"; fi
+          mkdir -p out/original-harness
+          javac -cp "$cp" \
+            -d out/original-harness \
+            tests/fixtures/GoldenFingerprintHarness.java
+          java -cp "out/original-harness:$cp" \
+            GoldenFingerprintHarness | tee out/evidence/original-observation.txt
+
+      - name: Attempt raw recovered behavior
+        id: raw_candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          src_root="out/static/highlevel/jadx/sources/org/sempersupra/aar/golden/kotlin"
+          test -d "$src_root"
+          mapfile -t recovered < <(find "$src_root" -type f -name '*.java' | sort)
+          test "${#recovered[@]}" -gt 0
+          cp="$KOTLIN_STDLIB"
+          if [ -n "$JETBRAINS_ANNOTATIONS" ]; then cp="$cp:$JETBRAINS_ANNOTATIONS"; fi
+          mkdir -p out/raw-classes out/raw-harness
+
+          set +e
+          javac -cp "$cp" -d out/raw-classes "${recovered[@]}" \
+            >out/evidence/raw-javac.stdout.txt \
+            2>out/evidence/raw-javac.stderr.txt
+          compile_rc=$?
+          set -e
+
+          if [ "$compile_rc" -ne 0 ]; then
+            echo "state=compile-failed" >> "$GITHUB_OUTPUT"
+            echo "detail=raw recovered javac returned $compile_rc" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          javac -cp "out/raw-classes:$cp" \
+            -d out/raw-harness tests/fixtures/GoldenFingerprintHarness.java
+          set +e
+          java -cp "out/raw-harness:out/raw-classes:$cp" \
+            GoldenFingerprintHarness \
+            >out/evidence/raw-observation.txt \
+            2>out/evidence/raw-run.stderr.txt
+          run_rc=$?
+          set -e
+          if [ "$run_rc" -eq 0 ]; then
+            echo "state=executed" >> "$GITHUB_OUTPUT"
+            echo "detail=raw recovered JVM execution completed" >> "$GITHUB_OUTPUT"
+          else
+            echo "state=run-failed" >> "$GITHUB_OUTPUT"
+            echo "detail=raw recovered java returned $run_rc" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Compare raw recovered behavior
+        shell: bash
+        env:
+          CANDIDATE_STATE: ${{ steps.raw_candidate.outputs.state }}
+          CANDIDATE_DETAIL: ${{ steps.raw_candidate.outputs.detail }}
+        run: |
+          set -euo pipefail
+          args=(
+            --original out/evidence/original-observation.txt
+            --candidate-state "$CANDIDATE_STATE"
+            --candidate-detail "$CANDIDATE_DETAIL"
+            --out out/evidence/raw-behavior.json
+          )
+          if [ "$CANDIDATE_STATE" = executed ]; then
+            args+=(--candidate out/evidence/raw-observation.txt)
+          fi
+          python3 tools/compare_behavior.py "${args[@]}"
+
+      - name: Produce repair-assisted representation
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="out/static/highlevel/jadx/sources/org/sempersupra/aar/golden/kotlin/GoldenRecordFingerprint.java"
+          dst="out/repaired-sources/org/sempersupra/aar/golden/kotlin/GoldenRecordFingerprint.java"
+          python3 tools/repair_jadx_kotlin_java.py \
+            --input "$src" \
+            --output "$dst" \
+            --manifest out/evidence/repair-manifest.json
+          diff -u "$src" "$dst" > out/evidence/repair.diff || true
+
+      - name: Execute repair-assisted behavior
+        id: repaired_candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t repaired < <(find out/repaired-sources -type f -name '*.java' | sort)
+          test "${#repaired[@]}" -gt 0
+          cp="$KOTLIN_STDLIB"
+          if [ -n "$JETBRAINS_ANNOTATIONS" ]; then cp="$cp:$JETBRAINS_ANNOTATIONS"; fi
+          mkdir -p out/repaired-classes out/repaired-harness
+
+          set +e
+          javac -cp "$cp" -d out/repaired-classes "${repaired[@]}" \
+            >out/evidence/repaired-javac.stdout.txt \
+            2>out/evidence/repaired-javac.stderr.txt
+          compile_rc=$?
+          set -e
+          if [ "$compile_rc" -ne 0 ]; then
+            cat out/evidence/repaired-javac.stderr.txt >&2
+            echo "state=compile-failed" >> "$GITHUB_OUTPUT"
+            echo "detail=repair-assisted javac returned $compile_rc" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          javac -cp "out/repaired-classes:$cp" \
+            -d out/repaired-harness tests/fixtures/GoldenFingerprintHarness.java
+          set +e
+          java -cp "out/repaired-harness:out/repaired-classes:$cp" \
+            GoldenFingerprintHarness \
+            >out/evidence/repaired-observation.txt \
+            2>out/evidence/repaired-run.stderr.txt
+          run_rc=$?
+          set -e
+          if [ "$run_rc" -eq 0 ]; then
+            echo "state=executed" >> "$GITHUB_OUTPUT"
+            echo "detail=repair-assisted recovered JVM execution completed" >> "$GITHUB_OUTPUT"
+          else
+            cat out/evidence/repaired-run.stderr.txt >&2
+            echo "state=run-failed" >> "$GITHUB_OUTPUT"
+            echo "detail=repair-assisted java returned $run_rc" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Compare repair-assisted behavior
+        shell: bash
+        env:
+          CANDIDATE_STATE: ${{ steps.repaired_candidate.outputs.state }}
+          CANDIDATE_DETAIL: ${{ steps.repaired_candidate.outputs.detail }}
+        run: |
+          set -euo pipefail
+          args=(
+            --original out/evidence/original-observation.txt
+            --candidate-state "$CANDIDATE_STATE"
+            --candidate-detail "$CANDIDATE_DETAIL"
+            --out out/evidence/repaired-behavior.json
+          )
+          if [ "$CANDIDATE_STATE" = executed ]; then
+            args+=(--candidate out/evidence/repaired-observation.txt)
+          fi
+          python3 tools/compare_behavior.py "${args[@]}"
+
+      - name: Synthesize raw and repair-assisted evidence summaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/summarize_recovery_evidence.py \
+            --artifact-sha256 "$APK_SHA" \
+            --static out/evidence/static-recovery.json \
+            --rebuild out/evidence/rebuild-report.json \
+            --behavior out/evidence/raw-behavior.json \
+            --out out/evidence/summary-raw.json
+
+          python3 tools/summarize_recovery_evidence.py \
+            --artifact-sha256 "$APK_SHA" \
+            --static out/evidence/static-recovery.json \
+            --rebuild out/evidence/rebuild-report.json \
+            --behavior out/evidence/repaired-behavior.json \
+            --out out/evidence/summary-repair-assisted.json
+
+      - name: Validate end-to-end evidence invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path("out/evidence")
+          static = json.loads((root / "static-recovery.json").read_text())
+          rebuild = json.loads((root / "rebuild-report.json").read_text())
+          raw = json.loads((root / "raw-behavior.json").read_text())
+          repaired = json.loads((root / "repaired-behavior.json").read_text())
+          repair_manifest = json.loads((root / "repair-manifest.json").read_text())
+          summary_raw = json.loads((root / "summary-raw.json").read_text())
+          summary_repaired = json.loads((root / "summary-repair-assisted.json").read_text())
+
+          assert static["status"] in {"PASS", "PARTIAL"}
+          assert not static.get("hard_failures")
+          assert rebuild["status"] in {
+              "REBUILDABLE-AS-EXPORTED",
+              "NOT-REBUILDABLE-AS-EXPORTED",
+          }
+          assert raw["status"] == "UNKNOWN", raw
+          assert repaired["status"] == "BEHAVIOR-MATCH", repaired
+          assert repair_manifest["semantic_claim"] == "NONE"
+          assert repair_manifest["input"]["sha256"] != repair_manifest["output"]["sha256"]
+
+          raw_claims = {x["id"]: x for x in summary_raw["claims"]}
+          repaired_claims = {x["id"]: x for x in summary_repaired["claims"]}
+          assert raw_claims["behavior.declared-vector"]["state"] == "UNKNOWN"
+          assert repaired_claims["behavior.declared-vector"]["state"] == "BEHAVIOR-MATCH"
+          assert any(x["id"] == "execution-environment" for x in summary_raw["unknowns"])
+          assert any(x["id"] == "execution-environment" for x in summary_repaired["unknowns"])
+          assert summary_raw["artifact"] == summary_repaired["artifact"]
+          PY
+
+          {
+            echo "AAR_E2E_STATUS=PASS"
+            echo "artifact_sha256=$APK_SHA"
+            python3 - <<'PY'
+          import json
+          for name in ("static-recovery.json", "rebuild-report.json", "raw-behavior.json", "repaired-behavior.json"):
+              d=json.load(open("out/evidence/"+name))
+              print(f"{name}: {d.get('status')}")
+          PY
+          } | tee out/evidence/e2e-verdict.txt
+
+      - name: Publish compact end-to-end evidence
+        if: always() && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: aar-kotlin-golden-e2e
+          path: out/evidence/
+          if-no-files-found: error
+          retention-days: 7
