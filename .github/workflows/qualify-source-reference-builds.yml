@@ -1,0 +1,146 @@
+name: Qualify Android source reference builds
+
+on:
+  pull_request:
+    paths:
+      - tools/reference-builds/**
+      - docs/recovery/source-reference-builds.md
+      - .github/workflows/qualify-source-reference-builds.yml
+  push:
+    branches: [main]
+    paths:
+      - tools/reference-builds/**
+      - docs/recovery/source-reference-builds.md
+      - .github/workflows/qualify-source-reference-builds.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - id: openssl-1.1.1w
+            component: OpenSSL
+            version: 1.1.1w
+            repository: openssl/openssl
+            tag: OpenSSL_1_1_1w
+            commit: e04bd3433fd84e1861bf258ea37928d9845e6a86
+            builder: openssl
+          - id: openssl-3.5.4
+            component: OpenSSL
+            version: 3.5.4
+            repository: openssl/openssl
+            tag: openssl-3.5.4
+            commit: c1eeb9406b6142148f267594197d853403d10208
+            builder: openssl
+          - id: opus-1.1.3
+            component: Opus
+            version: 1.1.3
+            repository: xiph/opus
+            tag: v1.1.3
+            commit: aa32042a50f2cbe0ff9d339948cb4712f5cc3d6e
+            builder: opus
+          - id: ffmpeg-4.4.2
+            component: FFmpeg
+            version: 4.4.2
+            repository: FFmpeg/FFmpeg
+            tag: n4.4.2
+            commit: d61977cbe453869cec28d32b71fe25c2cd965dcf
+            builder: ffmpeg
+
+    env:
+      NDK_VERSION: "27.0.12077973"
+      ANDROID_API: "21"
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: aar
+          persist-credentials: false
+
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ matrix.repository }}
+          ref: ${{ matrix.commit }}
+          path: upstream
+          persist-credentials: false
+
+      - name: Verify exact upstream source commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          observed="$(git -C upstream rev-parse HEAD)"
+          test "$observed" = "${{ matrix.commit }}"
+          echo "source_commit=$observed"
+
+      - name: Resolve pinned Android NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk_root="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          ndk="$sdk_root/ndk/$NDK_VERSION"
+          if [ ! -d "$ndk" ]; then
+            yes | "$sdk_root/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION" >/dev/null
+          fi
+          test -x "$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${ANDROID_API}-clang"
+          echo "NDK_ROOT=$ndk" >> "$GITHUB_ENV"
+
+      - name: Install autotools for Opus source build
+        if: matrix.builder == 'opus'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends autoconf automake libtool pkg-config
+
+      - name: Build source-known Android arm64 reference
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          case "${{ matrix.builder }}" in
+            openssl)
+              bash aar/tools/reference-builds/build_openssl_android.sh                 "$GITHUB_WORKSPACE/upstream" "$GITHUB_WORKSPACE/out" "$NDK_ROOT" "$ANDROID_API"
+              ;;
+            opus)
+              bash aar/tools/reference-builds/build_opus_android.sh                 "$GITHUB_WORKSPACE/upstream" "$GITHUB_WORKSPACE/out" "$NDK_ROOT" "$ANDROID_API"
+              ;;
+            ffmpeg)
+              bash aar/tools/reference-builds/build_ffmpeg_android.sh                 "$GITHUB_WORKSPACE/upstream" "$GITHUB_WORKSPACE/out" "$NDK_ROOT" "$ANDROID_API"
+              ;;
+            *)
+              echo "unknown builder: ${{ matrix.builder }}" >&2
+              exit 2
+              ;;
+          esac
+
+      - name: Record normalized source-build evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 aar/tools/reference-builds/write_reference_manifest.py             --component "${{ matrix.component }}"             --version "${{ matrix.version }}"             --source-repository "${{ matrix.repository }}"             --source-commit "${{ matrix.commit }}"             --source-tag "${{ matrix.tag }}"             --ndk-version "$NDK_VERSION"             --api "$ANDROID_API"             --lib-dir out/lib             --out out/reference-build.json
+
+          python3 - <<'PY'
+          import json
+          d=json.load(open("out/reference-build.json"))
+          assert d["binaries"], d
+          for b in d["binaries"]:
+              assert "AArch64" in b["elf"].get("machine",""), b
+          print("arm64-reference-validation=PASS")
+          PY
+
+      - name: Publish source-reference build
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: aar-source-reference-${{ matrix.id }}
+          path: |
+            out/reference-build.json
+            out/lib/
+          if-no-files-found: error
+          retention-days: 14
