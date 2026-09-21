@@ -3,7 +3,9 @@
 Status: MVP
 
 The static recovery stage consumes an APK whose exact bytes/hash are already
-known and emits multiple derived representations.
+known and emits multiple derived representations. Android split delivery means
+an individual APK is not required to contain DEX: native/config splits may be
+valid recovery units containing ELF code but no root classes*.dex.
 
 ## Current representations
 
@@ -31,5 +33,9 @@ increment.
 - dexdump/objdump output is not proof of completeness.
 - Native code discovered without supplied native analysis tools is reported as
   UNKNOWN rather than silently ignored.
+- A native-only split records DEX recovery as ABSENT and continues with native
+  recovery; absence of root DEX in a split is not itself a failure.
+- An APK containing neither supported root DEX nor native ELF records a hard
+  recovery failure rather than being treated as an empty success.
 - Tool-specific output is derived evidence and is not the durable canonical
   corpus schema.
