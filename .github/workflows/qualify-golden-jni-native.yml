@@ -1,0 +1,79 @@
+name: Qualify golden JNI native workload
+
+on:
+  pull_request:
+    paths:
+      - goldens/jni-native/**
+      - .github/workflows/qualify-golden-jni-native.yml
+  push:
+    branches:
+      - main
+    paths:
+      - goldens/jni-native/**
+      - .github/workflows/qualify-golden-jni-native.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+
+      - name: Ensure Android native toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk_root="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          sdkmanager_path="$(find "$sdk_root" -type f -name sdkmanager | sort | tail -n1)"
+          test -x "$sdkmanager_path"
+          "$sdkmanager_path" "ndk;27.0.12077973" "cmake;3.22.1"
+
+      - name: Run host behavioral oracle
+        shell: bash
+        working-directory: goldens/jni-native/host-test
+        run: |
+          set -euo pipefail
+          cmake -S . -B build
+          cmake --build build --parallel 2
+          ./build/golden_native_test
+
+      - name: Build two-ABI Android APK
+        working-directory: goldens/jni-native
+        run: gradle --no-daemon assembleRelease
+
+      - name: Verify JNI ELF inventory
+        shell: bash
+        working-directory: goldens/jni-native
+        run: |
+          set -euo pipefail
+          apk="$(find app/build/outputs/apk/release -type f -name '*.apk' | head -n1)"
+          test -n "$apk"
+          sha256sum "$apk" | tee apk.sha256
+          unzip -l "$apk" | tee apk-contents.txt
+          unzip -l "$apk" | grep -q 'lib/arm64-v8a/libaar_golden_jni.so'
+          unzip -l "$apk" | grep -q 'lib/x86_64/libaar_golden_jni.so'
+          unzip -l "$apk" | grep -q 'classes.dex'
+
+      - name: Publish golden JNI evidence
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: aar-golden-jni-native
+          path: |
+            goldens/jni-native/app/build/outputs/apk/release/*.apk
+            goldens/jni-native/apk.sha256
+            goldens/jni-native/apk-contents.txt
+          if-no-files-found: error
+          retention-days: 7
