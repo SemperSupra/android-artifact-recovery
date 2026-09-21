@@ -59,8 +59,14 @@ jobs:
           set -euo pipefail
           apk="$(find goldens/kotlin-dex/app/build/outputs/apk/release -type f -name '*.apk' | head -n1)"
           mkdir -p out
+          set +e
           "$RUNNER_TEMP/jadx/bin/jadx"             --export-gradle             --export-gradle-type android-app             -d out/recovered-gradle             "$apk"
-          find out/recovered-gradle -maxdepth 3 -type f | sort | tee out/recovered-gradle-files.txt
+          jadx_rc=$?
+          set -e
+          echo "$jadx_rc" | tee out/jadx-export-returncode.txt
+          test -d out/recovered-gradle
+          find out/recovered-gradle -maxdepth 4 -type f | sort | tee out/recovered-gradle-files.txt
+          test -s out/recovered-gradle-files.txt
 
       - name: Probe unmodified recovered rebuild
         run: |
@@ -78,12 +84,13 @@ jobs:
           PY
 
       - name: Publish rebuild evidence
-        if: github.event_name != 'pull_request'
+        if: always() && github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
           name: aar-rebuild-feasibility-kotlin
           path: |
             out/rebuild-report.json
             out/recovered-gradle-files.txt
+            out/jadx-export-returncode.txt
           if-no-files-found: error
           retention-days: 7
