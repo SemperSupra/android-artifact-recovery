@@ -167,7 +167,8 @@ def main() -> int:
     if not dex_files:
         raise SystemExit("No root classes*.dex files found")
 
-    failures: list[str] = []
+    hard_failures: list[str] = []
+    partials: list[str] = []
 
     for dex in dex_files:
         dest = out / "lowlevel" / "dexdump" / f"{dex.name}.txt"
@@ -182,7 +183,10 @@ def main() -> int:
             }
         )
         if result["returncode"] != 0:
-            failures.append(f"dexdump:{dex.name}")
+            if dest.is_file() and dest.stat().st_size > 0:
+                partials.append(f"dexdump:{dex.name}:nonzero-with-output")
+            else:
+                hard_failures.append(f"dexdump:{dex.name}:no-usable-output")
 
     jadx_out = out / "highlevel" / "jadx"
     jadx_result = run(
@@ -205,8 +209,14 @@ def main() -> int:
             "result": jadx_result,
         }
     )
+    jadx_files = [p for p in jadx_out.rglob("*") if p.is_file()] if jadx_out.exists() else []
     if jadx_result["returncode"] != 0:
-        failures.append("jadx")
+        if jadx_files:
+            partials.append("jadx:nonzero-with-output")
+        else:
+            hard_failures.append("jadx:no-usable-output")
+    elif not jadx_files:
+        hard_failures.append("jadx:no-output")
 
     if native_files:
         if not args.llvm_readelf or not args.llvm_objdump:
@@ -241,22 +251,38 @@ def main() -> int:
                     }
                 )
                 if readelf["returncode"] != 0:
-                    failures.append(f"readelf:{abi}:{stem}")
+                    if readelf_out.is_file() and readelf_out.stat().st_size > 0:
+                        partials.append(f"readelf:{abi}:{stem}:nonzero-with-output")
+                    else:
+                        hard_failures.append(f"readelf:{abi}:{stem}:no-usable-output")
                 if objdump["returncode"] != 0:
-                    failures.append(f"objdump:{abi}:{stem}")
+                    if disasm_out.is_file() and disasm_out.stat().st_size > 0:
+                        partials.append(f"objdump:{abi}:{stem}:nonzero-with-output")
+                    else:
+                        hard_failures.append(f"objdump:{abi}:{stem}:no-usable-output")
             manifest["native_recovery"] = {
                 "status": "PRESENT",
                 "representations": native_results,
             }
 
     manifest["outputs"] = hash_tree(out)
-    manifest["failures"] = failures
-    manifest["status"] = "PASS" if not failures else "FAIL"
+    manifest["hard_failures"] = hard_failures
+    manifest["partials"] = partials
+    manifest["status"] = (
+        "FAIL" if hard_failures else
+        "PARTIAL" if partials else
+        "PASS"
+    )
 
     manifest_path = out / "recovery-manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(json.dumps({
+        "status": manifest["status"],
+        "hard_failures": hard_failures,
+        "partials": partials,
+    }, indent=2))
 
-    return 0 if not failures else 1
+    return 1 if hard_failures else 0
 
 
 if __name__ == "__main__":
