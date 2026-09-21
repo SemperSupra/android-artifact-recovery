@@ -36,12 +36,40 @@ ANDROID_PLATFORM_LIBS = {
         "reference": "android-ndk:libz",
         "source_ref": "https://android.googlesource.com/platform/external/zlib/",
     },
+    "libEGL.so": {
+        "reference": "android-ndk:libEGL",
+        "source_ref": "https://android.googlesource.com/platform/frameworks/native/",
+    },
+    "libGLESv1_CM.so": {
+        "reference": "android-ndk:libGLESv1_CM",
+        "source_ref": "https://android.googlesource.com/platform/frameworks/native/",
+    },
+    "libGLESv2.so": {
+        "reference": "android-ndk:libGLESv2",
+        "source_ref": "https://android.googlesource.com/platform/frameworks/native/",
+    },
+    "libGLESv3.so": {
+        "reference": "android-ndk:libGLESv3",
+        "source_ref": "https://android.googlesource.com/platform/frameworks/native/",
+    },
+    "libjnigraphics.so": {
+        "reference": "android-ndk:libjnigraphics",
+        "source_ref": "https://android.googlesource.com/platform/frameworks/base/",
+    },
+    "libOpenSLES.so": {
+        "reference": "android-ndk:libOpenSLES",
+        "source_ref": "https://android.googlesource.com/platform/frameworks/wilhelm/",
+    },
 }
 
 RUNTIME_CANDIDATES = {
     "libc++_shared.so": {
         "reference": "android-ndk:libc++_shared",
         "source_ref": "https://android.googlesource.com/toolchain/llvm-project/libcxx/",
+    },
+    "libstdc++.so": {
+        "reference": "android-system:legacy-libstdc++",
+        "source_ref": "https://developer.android.com/ndk/guides/cpp-support",
     },
 }
 
