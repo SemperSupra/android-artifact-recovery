@@ -116,6 +116,7 @@ jobs:
           set -e
 
           if [ "$compile_rc" -ne 0 ]; then
+            cat out/recovered-javac.stderr.txt >&2
             echo "state=compile-failed" >> "$GITHUB_OUTPUT"
             echo "detail=javac returned $compile_rc" >> "$GITHUB_OUTPUT"
             exit 0
