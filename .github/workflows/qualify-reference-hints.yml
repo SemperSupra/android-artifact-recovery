@@ -1,0 +1,27 @@
+name: Qualify reference hint extraction
+
+on:
+  pull_request:
+    paths:
+      - tools/extract_reference_hints.py
+      - tests/test_extract_reference_hints.py
+      - docs/recovery/reference-hints.md
+      - .github/workflows/qualify-reference-hints.yml
+  push:
+    branches: [main]
+    paths:
+      - tools/extract_reference_hints.py
+      - tests/test_extract_reference_hints.py
+      - docs/recovery/reference-hints.md
+      - .github/workflows/qualify-reference-hints.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m unittest -v tests/test_extract_reference_hints.py
