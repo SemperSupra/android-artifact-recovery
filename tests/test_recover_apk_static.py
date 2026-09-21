@@ -65,5 +65,55 @@ class StaticRecoveryTests(unittest.TestCase):
             self.assertFalse((out / "inputs/assets/not-code.txt").exists())
 
 
+    def test_native_only_split_is_valid_recovery_unit(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            apk = root / "config.arm64_v8a.apk"
+            with zipfile.ZipFile(apk, "w") as z:
+                z.writestr("lib/arm64-v8a/libnative.so", b"ELFfixture")
+
+            jadx = root / "jadx"
+            dexdump = root / "dexdump"
+            readelf = root / "llvm-readelf"
+            objdump = root / "llvm-objdump"
+
+            make_tool(jadx, 'if [ "$1" = "--version" ]; then echo "1.5.6"; exit 0; fi\necho "jadx must not execute for native-only split" >&2\nexit 99')
+            make_tool(dexdump, 'if [ "$1" = "--help" ]; then echo "dexdump fixture"; exit 0; fi\necho "dexdump must not execute for native-only split" >&2\nexit 99')
+            make_tool(readelf, 'if [ "$1" = "--version" ]; then echo "LLVM fixture"; exit 0; fi\necho "ELF header"')
+            make_tool(objdump, 'if [ "$1" = "--version" ]; then echo "LLVM fixture"; exit 0; fi\necho "disassembly"')
+
+            out = root / "out"
+            cp = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    str(apk),
+                    "--out", str(out),
+                    "--jadx", str(jadx),
+                    "--dexdump", str(dexdump),
+                    "--llvm-readelf", str(readelf),
+                    "--llvm-objdump", str(objdump),
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(cp.returncode, 0, cp.stderr)
+
+            doc = json.loads((out / "recovery-manifest.json").read_text())
+            self.assertEqual(doc["status"], "PASS")
+            self.assertEqual(doc["dex_recovery"]["status"], "ABSENT")
+            self.assertEqual(doc["native_recovery"]["status"], "PRESENT")
+            self.assertEqual(len(doc["discovery"]["native"]), 1)
+            self.assertFalse(any(x["kind"].startswith("dex-") for x in doc["representations"]))
+            self.assertTrue(
+                (out / "lowlevel/native/arm64-v8a/libnative.so.readelf.txt").is_file()
+            )
+            self.assertTrue(
+                (out / "lowlevel/native/arm64-v8a/libnative.so.objdump.txt").is_file()
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

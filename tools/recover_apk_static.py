@@ -164,59 +164,72 @@ def main() -> int:
         "native": native_files,
     }
 
-    if not dex_files:
-        raise SystemExit("No root classes*.dex files found")
-
     hard_failures: list[str] = []
     partials: list[str] = []
 
-    for dex in dex_files:
-        dest = out / "lowlevel" / "dexdump" / f"{dex.name}.txt"
-        result = run([args.dexdump, "-d", str(dex)], dest)
-        manifest["representations"].append(
-            {
+    if not dex_files and not native_files:
+        hard_failures.append("no-supported-dex-or-native-code")
+
+    if dex_files:
+        dex_results: list[dict[str, object]] = []
+        for dex in dex_files:
+            dest = out / "lowlevel" / "dexdump" / f"{dex.name}.txt"
+            result = run([args.dexdump, "-d", str(dex)], dest)
+            rep = {
                 "kind": "dex-low-level",
                 "producer": "dexdump",
                 "input": str(dex),
                 "output": str(dest),
                 "result": result,
             }
-        )
-        if result["returncode"] != 0:
-            if dest.is_file() and dest.stat().st_size > 0:
-                partials.append(f"dexdump:{dex.name}:nonzero-with-output")
-            else:
-                hard_failures.append(f"dexdump:{dex.name}:no-usable-output")
+            manifest["representations"].append(rep)
+            dex_results.append(rep)
+            if result["returncode"] != 0:
+                if dest.is_file() and dest.stat().st_size > 0:
+                    partials.append(f"dexdump:{dex.name}:nonzero-with-output")
+                else:
+                    hard_failures.append(f"dexdump:{dex.name}:no-usable-output")
 
-    jadx_out = out / "highlevel" / "jadx"
-    jadx_result = run(
-        [
-            args.jadx,
-            "--no-res",
-            "--no-imports",
-            "--show-bad-code",
-            "-d",
-            str(jadx_out),
-            str(apk),
-        ]
-    )
-    manifest["representations"].append(
-        {
+        jadx_out = out / "highlevel" / "jadx"
+        jadx_result = run(
+            [
+                args.jadx,
+                "--no-res",
+                "--no-imports",
+                "--show-bad-code",
+                "-d",
+                str(jadx_out),
+                str(apk),
+            ]
+        )
+        jadx_rep = {
             "kind": "dex-high-level",
             "producer": "jadx",
             "input": str(apk),
             "output": str(jadx_out),
             "result": jadx_result,
         }
-    )
-    jadx_files = [p for p in jadx_out.rglob("*") if p.is_file()] if jadx_out.exists() else []
-    if jadx_result["returncode"] != 0:
-        if jadx_files:
-            partials.append("jadx:nonzero-with-output")
-        else:
-            hard_failures.append("jadx:no-usable-output")
-    elif not jadx_files:
-        hard_failures.append("jadx:no-output")
+        manifest["representations"].append(jadx_rep)
+        jadx_files = [p for p in jadx_out.rglob("*") if p.is_file()] if jadx_out.exists() else []
+        if jadx_result["returncode"] != 0:
+            if jadx_files:
+                partials.append("jadx:nonzero-with-output")
+            else:
+                hard_failures.append("jadx:no-usable-output")
+        elif not jadx_files:
+            hard_failures.append("jadx:no-output")
+
+        manifest["dex_recovery"] = {
+            "status": "PRESENT",
+            "root_dex_count": len(dex_files),
+            "representations": dex_results + [jadx_rep],
+        }
+    else:
+        manifest["dex_recovery"] = {
+            "status": "ABSENT",
+            "root_dex_count": 0,
+            "reason": "no root classes*.dex entries in this APK; valid for native/config splits",
+        }
 
     if native_files:
         if not args.llvm_readelf or not args.llvm_objdump:
