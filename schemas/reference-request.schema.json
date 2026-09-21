@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sempersupra.org/aar/reference-request.schema.json",
+  "title": "AAR On-demand Reference Request",
+  "type": "object",
+  "required": ["schema", "references"],
+  "properties": {
+    "schema": {"const": "aar-reference-request/v0"},
+    "references": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["component_id", "name", "version", "provenance_class", "source_ref"],
+        "properties": {
+          "component_id": {"type": "string"},
+          "name": {"type": "string"},
+          "version": {"type": ["string", "null"]},
+          "purl": {"type": ["string", "null"]},
+          "provenance_class": {"enum": ["R0", "R1", "R2", "R3", "R4", "R5"]},
+          "source_ref": {"type": "string"},
+          "metadata": {"type": "object"},
+          "artifacts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["url", "expected_sha256", "kind"],
+              "properties": {
+                "url": {"type": "string"},
+                "expected_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                "kind": {"enum": ["dex", "elf", "javascript", "wasm", "archive", "other"]},
+                "abi": {"type": ["string", "null"]},
+                "logical_name": {"type": ["string", "null"]}
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
