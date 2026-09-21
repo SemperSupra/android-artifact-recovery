@@ -125,13 +125,13 @@ jobs:
           set -euo pipefail
           sdk_root="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
           dexdump="$(find "$sdk_root" -type f -name dexdump | sort -V | tail -n1)"
-          readelf="$(find "$sdk_root/ndk/27.0.12077973" -type f -name 'llvm-readelf*' -print -quit || true)"
-          objdump="$(find "$sdk_root/ndk/27.0.12077973" -type f -name 'llvm-objdump*' -print -quit || true)"
+          readelf="$(find "$sdk_root/ndk/27.0.12077973" -name 'llvm-readelf*' -print -quit || true)"
+          objdump="$(find "$sdk_root/ndk/27.0.12077973" -name 'llvm-objdump*' -print -quit || true)"
           if [ -z "$readelf" ]; then
-            readelf="$(command -v llvm-readelf || find /usr/bin /usr/local/bin -maxdepth 1 -type f -name 'llvm-readelf-*' -print -quit 2>/dev/null || true)"
+            readelf="$(command -v llvm-readelf || find /usr/bin /usr/local/bin -maxdepth 1 -name 'llvm-readelf-*' -print -quit 2>/dev/null || command -v readelf || true)"
           fi
           if [ -z "$objdump" ]; then
-            objdump="$(command -v llvm-objdump || find /usr/bin /usr/local/bin -maxdepth 1 -type f -name 'llvm-objdump-*' -print -quit 2>/dev/null || true)"
+            objdump="$(command -v llvm-objdump || find /usr/bin /usr/local/bin -maxdepth 1 -name 'llvm-objdump-*' -print -quit 2>/dev/null || command -v objdump || true)"
           fi
           test -x "$dexdump"
           test -x "$readelf"
