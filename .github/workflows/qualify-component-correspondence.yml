@@ -1,0 +1,47 @@
+name: Qualify component correspondence foundation
+
+on:
+  pull_request:
+    paths:
+      - schemas/component-correspondence.schema.json
+      - schemas/reference-component.schema.json
+      - tools/component_correspondence.py
+      - tools/plan_residual_recovery.py
+      - tests/test_component_correspondence.py
+      - docs/recovery/component-correspondence.md
+      - .github/workflows/qualify-component-correspondence.yml
+  push:
+    branches:
+      - main
+    paths:
+      - schemas/component-correspondence.schema.json
+      - schemas/reference-component.schema.json
+      - tools/component_correspondence.py
+      - tools/plan_residual_recovery.py
+      - tests/test_component_correspondence.py
+      - docs/recovery/component-correspondence.md
+      - .github/workflows/qualify-component-correspondence.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate JSON schemas are parseable
+        run: |
+          python3 - <<'PY'
+          import json
+          for path in (
+              "schemas/component-correspondence.schema.json",
+              "schemas/reference-component.schema.json",
+          ):
+              with open(path, encoding="utf-8") as f:
+                  json.load(f)
+              print(path, "PASS")
+          PY
+      - name: Run correspondence and residual-planning qualification
+        run: python3 -m unittest -v tests/test_component_correspondence.py
