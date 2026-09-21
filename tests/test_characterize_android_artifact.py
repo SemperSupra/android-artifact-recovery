@@ -62,6 +62,45 @@ class CharacterizeArtifactTests(unittest.TestCase):
             elf = next(x for x in apk_doc["code_entries"] if x["kind"] == "elf")
             self.assertEqual(elf["metadata"]["machine"]["name"], "aarch64")
 
+    def test_magic_first_discovers_opaque_code_bearing_entries(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            apk = root / "opaque.apk"
+
+            elf = bytearray(64)
+            elf[:4] = b"\x7fELF"
+            elf[4] = 2
+            elf[5] = 1
+            elf[18:20] = struct.pack("<H", 62)
+
+            nested = io.BytesIO()
+            with zipfile.ZipFile(nested, "w") as z:
+                z.writestr("payload.txt", "fixture")
+
+            with zipfile.ZipFile(apk, "w") as z:
+                z.writestr("assets/opaque-one.bin", b"dex\n039\x00" + b"D" * 24)
+                z.writestr("res/raw/opaque-two.dat", bytes(elf))
+                z.writestr("assets/opaque-three.bin", b"\x00asm\x01\x00\x00\x00")
+                z.writestr("assets/opaque-four.blob", nested.getvalue())
+                z.writestr("assets/plain.bin", b"ordinary bytes")
+
+            out = root / "out.json"
+            cp = self.run_tool(apk, out)
+            self.assertEqual(cp.returncode, 0, cp.stderr)
+            doc = json.loads(out.read_text())
+            entries = {x["path"]: x for x in doc["apks"][0]["code_entries"]}
+
+            self.assertEqual(entries["assets/opaque-one.bin"]["kind"], "dex")
+            self.assertEqual(entries["assets/opaque-one.bin"]["metadata"]["version"], "039")
+            self.assertEqual(entries["res/raw/opaque-two.dat"]["kind"], "elf")
+            self.assertEqual(
+                entries["res/raw/opaque-two.dat"]["metadata"]["machine"]["name"],
+                "x86_64",
+            )
+            self.assertEqual(entries["assets/opaque-three.bin"]["kind"], "wasm")
+            self.assertEqual(entries["assets/opaque-four.blob"]["kind"], "archive")
+            self.assertNotIn("assets/plain.bin", entries)
+
     def test_xapk_enumerates_base_and_config_split_without_unbounded_extract(self):
         with tempfile.TemporaryDirectory() as td:
             root = pathlib.Path(td)
