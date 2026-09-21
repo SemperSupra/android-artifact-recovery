@@ -19,7 +19,7 @@ POM_PROPS_RE = re.compile(
     r"(?m)^(groupId|artifactId|version)\s*=\s*(.+?)\s*$"
 )
 PACKAGE_JSON_KEYS = ("name", "version")
-SOURCE_PATH_RE = re.compile(r"(?:^|[/\\])node_modules[/\\](@?[^/\\]+(?:[/\\][^/\\]+)?)")
+SOURCE_PATH_RE = re.compile(r"(?:^|[/\\])node_modules[/\\](@[^/\\\\\"'\\s]+[/\\][^/\\\\\"'\\s]+|[^/\\\\\"'\\s]+)")
 SEMVER_RE = re.compile(r"\b\d+\.\d+(?:\.\d+)?(?:[-+._][0-9A-Za-z.-]+)?\b")
 
 KNOWN_PATTERNS = [
