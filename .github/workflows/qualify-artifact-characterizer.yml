@@ -1,0 +1,27 @@
+name: Qualify Android artifact characterizer
+
+on:
+  pull_request:
+    paths:
+      - 'tools/characterize_android_artifact.py'
+      - 'tests/test_characterize_android_artifact.py'
+      - 'docs/recovery/artifact-characterization.md'
+      - '.github/workflows/qualify-artifact-characterizer.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'tools/characterize_android_artifact.py'
+      - 'tests/test_characterize_android_artifact.py'
+      - '.github/workflows/qualify-artifact-characterizer.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fixture:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m unittest -v tests/test_characterize_android_artifact.py
