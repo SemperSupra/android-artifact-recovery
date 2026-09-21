@@ -126,6 +126,10 @@ def main() -> int:
     p.add_argument("--dexdump", required=True)
     p.add_argument("--llvm-readelf")
     p.add_argument("--llvm-objdump")
+    p.add_argument("--max-native-files", type=int, default=0,
+                   help="Maximum native ELF inputs to recover; 0 means unlimited")
+    p.add_argument("--max-native-total-bytes", type=int, default=0,
+                   help="Maximum total native ELF input bytes to recover; 0 means unlimited")
     args = p.parse_args()
 
     apk = pathlib.Path(args.apk).resolve()
@@ -148,6 +152,10 @@ def main() -> int:
         "tools": {
             "jadx": tool_version(args.jadx, ["--version"]),
             "dexdump": tool_version(args.dexdump, ["--help"]),
+        },
+        "bounds": {
+            "max_native_files": args.max_native_files,
+            "max_native_total_bytes": args.max_native_total_bytes,
         },
     }
 
@@ -232,16 +240,58 @@ def main() -> int:
         }
 
     if native_files:
+        selected_native: list[dict[str, object]] = []
+        skipped_native: list[dict[str, object]] = []
+        selected_native_bytes = 0
+
+        for item in native_files:
+            size = int(item["size_bytes"])
+            count_bound_hit = (
+                args.max_native_files > 0
+                and len(selected_native) >= args.max_native_files
+            )
+            byte_bound_hit = (
+                args.max_native_total_bytes > 0
+                and selected_native_bytes + size > args.max_native_total_bytes
+            )
+            if count_bound_hit or byte_bound_hit:
+                reasons = []
+                if count_bound_hit:
+                    reasons.append("max-native-files")
+                if byte_bound_hit:
+                    reasons.append("max-native-total-bytes")
+                skipped_native.append(
+                    {
+                        "archive_path": item["archive_path"],
+                        "abi": item["abi"],
+                        "soname": item["soname"],
+                        "size_bytes": size,
+                        "sha256": item["sha256"],
+                        "state": "SKIPPED_BOUND",
+                        "reason": "+".join(reasons),
+                    }
+                )
+                continue
+            selected_native.append(item)
+            selected_native_bytes += size
+
+        if skipped_native:
+            partials.append(f"native:bounded-skip:{len(skipped_native)}")
+
         if not args.llvm_readelf or not args.llvm_objdump:
             manifest["native_recovery"] = {
                 "status": "UNKNOWN",
                 "reason": "native code discovered but LLVM recovery tools were not supplied",
+                "discovered_count": len(native_files),
+                "selected_count": len(selected_native),
+                "selected_input_bytes": selected_native_bytes,
+                "skipped": skipped_native,
             }
         else:
             manifest["tools"]["llvm-readelf"] = tool_version(args.llvm_readelf, ["--version"])
             manifest["tools"]["llvm-objdump"] = tool_version(args.llvm_objdump, ["--version"])
             native_results: list[dict[str, object]] = []
-            for item in native_files:
+            for item in selected_native:
                 native = pathlib.Path(str(item["path"]))
                 abi = str(item["abi"])
                 stem = native.name
@@ -274,7 +324,11 @@ def main() -> int:
                     else:
                         hard_failures.append(f"objdump:{abi}:{stem}:no-usable-output")
             manifest["native_recovery"] = {
-                "status": "PRESENT",
+                "status": "PARTIAL" if skipped_native else "PRESENT",
+                "discovered_count": len(native_files),
+                "selected_count": len(selected_native),
+                "selected_input_bytes": selected_native_bytes,
+                "skipped": skipped_native,
                 "representations": native_results,
             }
 
