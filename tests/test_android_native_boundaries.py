@@ -29,6 +29,11 @@ class AndroidNativeBoundaryTests(unittest.TestCase):
                                 "liblog.so",
                                 "libknown.so",
                                 "libc++_shared.so",
+                                "libstdc++.so",
+                                "libEGL.so",
+                                "libGLESv2.so",
+                                "libjnigraphics.so",
+                                "libOpenSLES.so",
                                 "libmystery.so",
                             ],
                         },
@@ -60,6 +65,9 @@ class AndroidNativeBoundaryTests(unittest.TestCase):
             self.assertEqual(by[("elf:libapp.so", "liblog.so")]["state"], "ANDROID_PLATFORM_BOUNDARY")
             self.assertEqual(by[("elf:libapp.so", "libknown.so")]["state"], "BUNDLED_DEPENDENCY")
             self.assertEqual(by[("elf:libapp.so", "libc++_shared.so")]["state"], "NDK_RUNTIME_CANDIDATE")
+            self.assertEqual(by[("elf:libapp.so", "libstdc++.so")]["state"], "NDK_RUNTIME_CANDIDATE")
+            for dep in ("libEGL.so", "libGLESv2.so", "libjnigraphics.so", "libOpenSLES.so"):
+                self.assertEqual(by[("elf:libapp.so", dep)]["state"], "ANDROID_PLATFORM_BOUNDARY")
             self.assertEqual(by[("elf:libapp.so", "libmystery.so")]["state"], "UNRESOLVED_EXTERNAL")
             self.assertEqual(by[("elf:libknown.so", "libm.so")]["state"], "ANDROID_PLATFORM_BOUNDARY")
             self.assertTrue(doc["policy"]["platform_boundary_is_semantic_reference_not_exact_runtime_bytes"])
