@@ -1,0 +1,170 @@
+name: Qualify static APK recovery
+
+on:
+  pull_request:
+    paths:
+      - tools/recover_apk_static.py
+      - tests/test_recover_apk_static.py
+      - docs/recovery/static-representations.md
+      - .github/workflows/qualify-static-recovery.yml
+  push:
+    branches:
+      - main
+    paths:
+      - tools/recover_apk_static.py
+      - tests/test_recover_apk_static.py
+      - docs/recovery/static-representations.md
+      - .github/workflows/qualify-static-recovery.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fixture:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m unittest -v tests/test_recover_apk_static.py
+
+  golden-kotlin:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+
+      - name: Build source-known Kotlin golden
+        working-directory: goldens/kotlin-dex
+        run: gradle --no-daemon assembleRelease
+
+      - name: Install pinned JADX
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3             https://github.com/skylot/jadx/releases/download/v1.5.6/jadx-1.5.6.zip             -o "$RUNNER_TEMP/jadx.zip"
+          sha256sum "$RUNNER_TEMP/jadx.zip" | tee "$RUNNER_TEMP/jadx.zip.sha256"
+          unzip -q "$RUNNER_TEMP/jadx.zip" -d "$RUNNER_TEMP/jadx"
+
+      - name: Resolve recovery tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          dexdump="$(find "${ANDROID_HOME:-/usr/local/lib/android/sdk}" -type f -name dexdump | sort -V | tail -n1)"
+          test -x "$dexdump"
+          echo "DEXDUMP=$dexdump" >> "$GITHUB_ENV"
+          echo "JADX=$RUNNER_TEMP/jadx/bin/jadx" >> "$GITHUB_ENV"
+
+      - name: Recover independent DEX representations
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="$(find goldens/kotlin-dex/app/build/outputs/apk/release -type f -name '*.apk' | head -n1)"
+          python3 tools/recover_apk_static.py "$apk"             --out out/static-kotlin             --jadx "$JADX"             --dexdump "$DEXDUMP"
+          find out/static-kotlin/highlevel/jadx -type f -name 'GoldenRecordFingerprint.java' -print -quit | grep -q .
+          grep -R -q 'canonicalize' out/static-kotlin/lowlevel/dexdump
+          python3 -c 'import json; d=json.load(open("out/static-kotlin/recovery-manifest.json")); assert d["status"] in {"PASS","PARTIAL"}; assert len(d["discovery"]["dex"]) >= 1'
+
+      - name: Publish recovery evidence
+        if: always() && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: aar-static-recovery-kotlin
+          path: out/static-kotlin/
+          if-no-files-found: error
+          retention-days: 7
+
+
+  golden-jni:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+
+      - name: Ensure Android native toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk_root="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          sdkmanager_path="$(find "$sdk_root" -type f -name sdkmanager | sort | tail -n1)"
+          test -x "$sdkmanager_path"
+          "$sdkmanager_path" "ndk;27.0.12077973" "cmake;3.22.1"
+
+      - name: Build source-known JNI golden
+        working-directory: goldens/jni-native
+        run: gradle --no-daemon assembleRelease
+
+      - name: Install pinned JADX
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3             https://github.com/skylot/jadx/releases/download/v1.5.6/jadx-1.5.6.zip             -o "$RUNNER_TEMP/jadx.zip"
+          sha256sum "$RUNNER_TEMP/jadx.zip" | tee "$RUNNER_TEMP/jadx.zip.sha256"
+          unzip -q "$RUNNER_TEMP/jadx.zip" -d "$RUNNER_TEMP/jadx"
+
+      - name: Resolve DEX and native recovery tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk_root="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          dexdump="$(find "$sdk_root" -type f -name dexdump | sort -V | tail -n1)"
+          readelf="$(find "$sdk_root/ndk/27.0.12077973" -name 'llvm-readelf*' -print -quit || true)"
+          objdump="$(find "$sdk_root/ndk/27.0.12077973" -name 'llvm-objdump*' -print -quit || true)"
+          if [ -z "$readelf" ]; then
+            readelf="$(command -v llvm-readelf || find /usr/bin /usr/local/bin -maxdepth 1 -name 'llvm-readelf-*' -print -quit 2>/dev/null || command -v readelf || true)"
+          fi
+          if [ -z "$objdump" ]; then
+            objdump="$(command -v llvm-objdump || find /usr/bin /usr/local/bin -maxdepth 1 -name 'llvm-objdump-*' -print -quit 2>/dev/null || command -v objdump || true)"
+          fi
+          test -x "$dexdump"
+          test -x "$readelf"
+          test -x "$objdump"
+          "$readelf" --version | head -n 1
+          "$objdump" --version | head -n 1
+          echo "DEXDUMP=$dexdump" >> "$GITHUB_ENV"
+          echo "JADX=$RUNNER_TEMP/jadx/bin/jadx" >> "$GITHUB_ENV"
+          echo "LLVM_READELF=$readelf" >> "$GITHUB_ENV"
+          echo "LLVM_OBJDUMP=$objdump" >> "$GITHUB_ENV"
+
+      - name: Recover DEX and native low-level representations
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="$(find goldens/jni-native/app/build/outputs/apk/release -type f -name '*.apk' | head -n1)"
+          python3 tools/recover_apk_static.py "$apk"             --out out/static-jni             --jadx "$JADX"             --dexdump "$DEXDUMP"             --llvm-readelf "$LLVM_READELF"             --llvm-objdump "$LLVM_OBJDUMP"
+          python3 - <<'PY'
+          import json
+          d = json.load(open("out/static-jni/recovery-manifest.json"))
+          assert d["status"] in {"PASS", "PARTIAL"}
+          native = d["discovery"]["native"]
+          assert {x["abi"] for x in native} == {"arm64-v8a", "x86_64"}
+          assert d["native_recovery"]["status"] == "PRESENT"
+          assert len(d["native_recovery"]["representations"]) == 2
+          PY
+          grep -R -q 'Java_org_sempersupra_aar_golden_jni_NativePayloadStats_nativeAnalyze' out/static-jni/lowlevel/native
+
+      - name: Publish JNI recovery evidence
+        if: always() && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: aar-static-recovery-jni
+          path: out/static-jni/
+          if-no-files-found: error
+          retention-days: 7
