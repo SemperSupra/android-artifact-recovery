@@ -115,5 +115,56 @@ class StaticRecoveryTests(unittest.TestCase):
             )
 
 
+    def test_native_recovery_bounds_are_explicit_partial(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            apk = root / "config.arm64_v8a.apk"
+            with zipfile.ZipFile(apk, "w") as z:
+                z.writestr("lib/arm64-v8a/liba.so", b"ELFa")
+                z.writestr("lib/arm64-v8a/libb.so", b"ELFb")
+
+            jadx = root / "jadx"
+            dexdump = root / "dexdump"
+            readelf = root / "llvm-readelf"
+            objdump = root / "llvm-objdump"
+
+            make_tool(jadx, 'if [ "$1" = "--version" ]; then echo "1.5.6"; exit 0; fi\nexit 99')
+            make_tool(dexdump, 'if [ "$1" = "--help" ]; then echo "dexdump fixture"; exit 0; fi\nexit 99')
+            make_tool(readelf, 'if [ "$1" = "--version" ]; then echo "LLVM fixture"; exit 0; fi\necho "ELF header"')
+            make_tool(objdump, 'if [ "$1" = "--version" ]; then echo "LLVM fixture"; exit 0; fi\necho "disassembly"')
+
+            out = root / "out"
+            cp = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    str(apk),
+                    "--out", str(out),
+                    "--jadx", str(jadx),
+                    "--dexdump", str(dexdump),
+                    "--llvm-readelf", str(readelf),
+                    "--llvm-objdump", str(objdump),
+                    "--max-native-files", "1",
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(cp.returncode, 0, cp.stderr)
+
+            doc = json.loads((out / "recovery-manifest.json").read_text())
+            self.assertEqual(doc["status"], "PARTIAL")
+            self.assertEqual(doc["native_recovery"]["status"], "PARTIAL")
+            self.assertEqual(doc["native_recovery"]["discovered_count"], 2)
+            self.assertEqual(doc["native_recovery"]["selected_count"], 1)
+            self.assertEqual(len(doc["native_recovery"]["skipped"]), 1)
+            self.assertEqual(doc["native_recovery"]["skipped"][0]["state"], "SKIPPED_BOUND")
+            self.assertIn("native:bounded-skip:1", doc["partials"])
+            native_outputs = list((out / "lowlevel/native").rglob("*.objdump.txt"))
+            self.assertEqual(len(native_outputs), 1)
+
+
+
 if __name__ == "__main__":
     unittest.main()

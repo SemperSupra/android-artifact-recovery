@@ -39,3 +39,30 @@ increment.
   recovery failure rather than being treated as an empty success.
 - Tool-specific output is derived evidence and is not the durable canonical
   corpus schema.
+
+## Native representation bounds
+
+Real split APKs can contain dozens or hundreds of ELF objects. Discoverability
+does not authorize unbounded disassembly.
+
+The recovery tool therefore supports two optional representation-production
+bounds:
+
+- `--max-native-files N` — process at most N native inputs;
+- `--max-native-total-bytes B` — process at most B aggregate native input bytes.
+
+A value of zero means unlimited and preserves the previously qualified golden
+behavior.
+
+Selection is deterministic over the discovered ABI/soname ordering. Every
+bounded-out ELF remains in discovery evidence and is recorded under
+`native_recovery.skipped` with `state=SKIPPED_BOUND` and a concrete reason.
+
+If any native input is skipped by an explicit bound:
+
+- native recovery is `PARTIAL`;
+- the overall recovery is `PARTIAL`, absent a hard failure;
+- the tool exits successfully so bounded partial evidence can be consumed;
+- the skipped material is not treated as absent or semantically recovered.
+
+These are output/work bounds, not discovery filters.
