@@ -1,0 +1,28 @@
+name: Qualify AAR evidence summary
+
+on:
+  pull_request:
+    paths:
+      - tools/summarize_recovery_evidence.py
+      - tests/test_summarize_recovery_evidence.py
+      - docs/recovery/evidence-summary.md
+      - .github/workflows/qualify-evidence-summary.yml
+  push:
+    branches:
+      - main
+    paths:
+      - tools/summarize_recovery_evidence.py
+      - tests/test_summarize_recovery_evidence.py
+      - docs/recovery/evidence-summary.md
+      - .github/workflows/qualify-evidence-summary.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fixture:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m unittest -v tests/test_summarize_recovery_evidence.py
