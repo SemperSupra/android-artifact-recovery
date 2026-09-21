@@ -171,21 +171,36 @@ def characterize_apk(path: pathlib.Path, *, logical_name: str | None, max_hash_b
             result["uncompressed_bytes"] = sum(i.file_size for i in infos)
 
             for info in infos:
-                suffix = pathlib.PurePosixPath(info.filename).suffix.lower()
-                likely = (
-                    info.filename.startswith("classes")
-                    or "/lib/" in f"/{info.filename}"
-                    or suffix in SCRIPT_EXTS
-                    or suffix in ARCHIVE_EXTS
-                    or suffix in {".wasm", ".dex", ".so"}
-                )
-                if not likely:
+                # Sniff every entry before applying filename/path hints. Code-bearing
+                # material may be deliberately or incidentally stored under opaque
+                # names, so DEX/ELF/WASM/archive magic must win over extensions.
+                try:
+                    with zf.open(info) as fh:
+                        prefix = fh.read(64)
+                except (RuntimeError, OSError, zipfile.BadZipFile) as exc:
+                    result["errors"].append(f"{info.filename}: prefix read failed: {exc}")
                     continue
 
-                with zf.open(info) as fh:
-                    digest, read_bytes, prefix, complete = hash_stream(fh, max_hash_bytes)
                 kind, meta = classify_entry(info.filename, prefix)
                 if kind is None:
+                    continue
+
+                try:
+                    with zf.open(info) as fh:
+                        digest, read_bytes, hashed_prefix, complete = hash_stream(
+                            fh, max_hash_bytes
+                        )
+                except (RuntimeError, OSError, zipfile.BadZipFile) as exc:
+                    result["errors"].append(f"{info.filename}: bounded hash failed: {exc}")
+                    continue
+
+                # Classification metadata comes from the independent fixed-size
+                # sniff above. hashed_prefix is retained only as an integrity
+                # cross-check against a surprising archive-reader result.
+                if hashed_prefix[: len(prefix)] != prefix[: len(hashed_prefix)]:
+                    result["errors"].append(
+                        f"{info.filename}: prefix changed between sniff and hash"
+                    )
                     continue
 
                 if kind == "elf":
