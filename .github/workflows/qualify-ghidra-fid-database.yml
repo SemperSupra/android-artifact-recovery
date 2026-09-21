@@ -1,0 +1,135 @@
+name: Qualify populated Ghidra FID database
+
+on:
+  pull_request:
+    paths:
+      - tools/ghidra/AarCreateFidReference.java
+      - tools/ghidra/AarQueryFidReference.java
+      - tools/evaluate_ghidra_fid_database.py
+      - docs/recovery/ghidra-fid-database.md
+      - .github/workflows/qualify-ghidra-fid-database.yml
+      - goldens/component-attribution/native/**
+  push:
+    branches: [main]
+    paths:
+      - tools/ghidra/AarCreateFidReference.java
+      - tools/ghidra/AarQueryFidReference.java
+      - tools/evaluate_ghidra_fid_database.py
+      - docs/recovery/ghidra-fid-database.md
+      - .github/workflows/qualify-ghidra-fid-database.yml
+      - goldens/component-attribution/native/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      GHIDRA_ZIP: ghidra_12.1.4_PUBLIC_20260921.zip
+      GHIDRA_URL: https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.1.4_build/ghidra_12.1.4_PUBLIC_20260921.zip
+      GHIDRA_SHA256: ddac49f903da9d5bac833e5cc79395098b9c33cfd3279be5f31bd00387d2d4db
+      FID_FAMILY: aar-known-component
+      FID_VERSION: "1.0"
+      FID_VARIANT: gcc-o2-x86_64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Build native interview corpus
+        shell: bash
+        working-directory: goldens/component-attribution/native
+        run: |
+          set -euo pipefail
+          rm -rf build
+          mkdir -p build
+          cc -shared -fPIC -O2 -Wl,-soname,libaarknown.so -o build/libaarknown.so known_component.c
+          cp build/libaarknown.so build/libaarknown-exact-copy.so
+          cc -shared -fPIC -O0 -Wl,-soname,libaarknown.so -o build/libaarknown-o0.so known_component.c
+          cp build/libaarknown.so build/libaarknown-stripped.so
+          strip --strip-unneeded build/libaarknown-stripped.so
+          cc -shared -fPIC -O2 -Wl,-soname,libaarknown.so -o build/libaarknown-patched.so patched_component.c
+          cc -shared -fPIC -O2 -Wl,-soname,libaarknown.so -o build/libaarknown-false-friend.so false_friend.c
+
+      - name: Install pinned Ghidra
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 --retry-all-errors "$GHIDRA_URL" -o "$RUNNER_TEMP/$GHIDRA_ZIP"
+          echo "$GHIDRA_SHA256  $RUNNER_TEMP/$GHIDRA_ZIP" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/ghidra"
+          unzip -q "$RUNNER_TEMP/$GHIDRA_ZIP" -d "$RUNNER_TEMP/ghidra"
+          ghidra_dir="$(find "$RUNNER_TEMP/ghidra" -mindepth 1 -maxdepth 1 -type d -name 'ghidra_*' -print -quit)"
+          test -x "$ghidra_dir/support/analyzeHeadless"
+          echo "GHIDRA_DIR=$ghidra_dir" >> "$GITHUB_ENV"
+
+      - name: Create source-known FID reference database
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/query "$RUNNER_TEMP/aar-fid-projects"
+          db="$RUNNER_TEMP/aar-known.fidb"
+
+          # FID ingestion needs a saved DomainFile identity. Import/save first,
+          # then populate from a second headless process pass.
+          "$GHIDRA_DIR/support/analyzeHeadless" \
+            "$RUNNER_TEMP/aar-fid-projects" aar_fid_reference \
+            -import "$GITHUB_WORKSPACE/goldens/component-attribution/native/build/libaarknown.so" \
+            -analysisTimeoutPerFile 120 \
+            -max-cpu 2
+
+          "$GHIDRA_DIR/support/analyzeHeadless" \
+            "$RUNNER_TEMP/aar-fid-projects" aar_fid_reference \
+            -process libaarknown.so \
+            -scriptPath "$GITHUB_WORKSPACE/tools/ghidra" \
+            -postScript AarCreateFidReference.java \
+              "$db" "$FID_FAMILY" "$FID_VERSION" "$FID_VARIANT" \
+              "$GITHUB_WORKSPACE/out/reference.json" \
+            -analysisTimeoutPerFile 120 \
+            -max-cpu 2
+
+          test -s "$db"
+          test -s out/reference.json
+          sha256sum "$db" | tee out/reference-fidb.sha256
+          echo "FID_DB=$db" >> "$GITHUB_ENV"
+
+      - name: Query adversarial variants
+        shell: bash
+        run: |
+          set -euo pipefail
+          declare -A files=(
+            [exact-copy]="$GITHUB_WORKSPACE/goldens/component-attribution/native/build/libaarknown-exact-copy.so"
+            [stripped]="$GITHUB_WORKSPACE/goldens/component-attribution/native/build/libaarknown-stripped.so"
+            [patched]="$GITHUB_WORKSPACE/goldens/component-attribution/native/build/libaarknown-patched.so"
+            [false-friend]="$GITHUB_WORKSPACE/goldens/component-attribution/native/build/libaarknown-false-friend.so"
+            [o0]="$GITHUB_WORKSPACE/goldens/component-attribution/native/build/libaarknown-o0.so"
+          )
+
+          for variant in exact-copy stripped patched false-friend o0; do
+            project="aar_fid_query_${variant//[^A-Za-z0-9_]/_}"
+            "$GHIDRA_DIR/support/analyzeHeadless"               "$RUNNER_TEMP/aar-fid-projects" "$project"               -import "${files[$variant]}"               -scriptPath "$GITHUB_WORKSPACE/tools/ghidra"               -postScript AarQueryFidReference.java                 "$FID_DB" "$FID_FAMILY" "$GITHUB_WORKSPACE/out/query/$variant.json"               -analysisTimeoutPerFile 120               -max-cpu 2               -deleteProject
+          done
+
+      - name: Evaluate populated FID database
+        run: |
+          python3 tools/evaluate_ghidra_fid_database.py             --dir out/query             --reference out/reference.json             --out out/fid-database-qualification.json
+
+      - name: Publish normalized FID database evidence
+        if: always() && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: aar-ghidra-fid-database-qualification
+          path: |
+            out/reference.json
+            out/reference-fidb.sha256
+            out/query/*.json
+            out/fid-database-qualification.json
+          if-no-files-found: warn
+          retention-days: 14
