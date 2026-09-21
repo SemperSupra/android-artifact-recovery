@@ -1,0 +1,111 @@
+name: Qualify Ghidra BSim incremental value
+
+on:
+  pull_request:
+    paths:
+      - tools/ghidra/AarBSimCompare.java
+      - tools/evaluate_ghidra_bsim_goldens.py
+      - docs/recovery/ghidra-bsim-qualification.md
+      - .github/workflows/qualify-ghidra-bsim.yml
+      - goldens/component-attribution/native/**
+  push:
+    branches: [main]
+    paths:
+      - tools/ghidra/AarBSimCompare.java
+      - tools/evaluate_ghidra_bsim_goldens.py
+      - docs/recovery/ghidra-bsim-qualification.md
+      - .github/workflows/qualify-ghidra-bsim.yml
+      - goldens/component-attribution/native/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      GHIDRA_ZIP: ghidra_12.1.4_PUBLIC_20260921.zip
+      GHIDRA_URL: https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.1.4_build/ghidra_12.1.4_PUBLIC_20260921.zip
+      GHIDRA_SHA256: ddac49f903da9d5bac833e5cc79395098b9c33cfd3279be5f31bd00387d2d4db
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Build native interview corpus
+        shell: bash
+        working-directory: goldens/component-attribution/native
+        run: |
+          set -euo pipefail
+          rm -rf build
+          mkdir -p build
+          cc -shared -fPIC -O2 -Wl,-soname,libaarknown.so -o build/libaarknown.so known_component.c
+          cp build/libaarknown.so build/libaarknown-exact-copy.so
+          cc -shared -fPIC -O0 -Wl,-soname,libaarknown.so -o build/libaarknown-o0.so known_component.c
+          cp build/libaarknown.so build/libaarknown-stripped.so
+          strip --strip-unneeded build/libaarknown-stripped.so
+          cc -shared -fPIC -O2 -Wl,-soname,libaarknown.so -o build/libaarknown-patched.so patched_component.c
+          cc -shared -fPIC -O2 -Wl,-soname,libaarknown.so -o build/libaarknown-false-friend.so false_friend.c
+
+      - name: Install pinned Ghidra
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 --retry-all-errors "$GHIDRA_URL" -o "$RUNNER_TEMP/$GHIDRA_ZIP"
+          echo "$GHIDRA_SHA256  $RUNNER_TEMP/$GHIDRA_ZIP" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/ghidra"
+          unzip -q "$RUNNER_TEMP/$GHIDRA_ZIP" -d "$RUNNER_TEMP/ghidra"
+          ghidra_dir="$(find "$RUNNER_TEMP/ghidra" -mindepth 1 -maxdepth 1 -type d -name 'ghidra_*' -print -quit)"
+          test -x "$ghidra_dir/support/analyzeHeadless"
+          echo "GHIDRA_DIR=$ghidra_dir" >> "$GITHUB_ENV"
+
+      - name: Import and save reference plus candidate programs
+        shell: bash
+        run: |
+          set -euo pipefail
+          project_dir="$RUNNER_TEMP/aar-bsim-project"
+          mkdir -p "$project_dir" out/bsim
+          echo "BSIM_PROJECT_DIR=$project_dir" >> "$GITHUB_ENV"
+
+          "$GHIDRA_DIR/support/analyzeHeadless"             "$project_dir" aar_bsim             -import "$GITHUB_WORKSPACE/goldens/component-attribution/native/build/libaarknown.so"             -analysisTimeoutPerFile 120 -max-cpu 2
+
+          for file in             libaarknown-exact-copy.so             libaarknown-stripped.so             libaarknown-patched.so             libaarknown-false-friend.so             libaarknown-o0.so
+          do
+            "$GHIDRA_DIR/support/analyzeHeadless"               "$project_dir" aar_bsim               -import "$GITHUB_WORKSPACE/goldens/component-attribution/native/build/$file"               -analysisTimeoutPerFile 120 -max-cpu 2
+          done
+
+      - name: Compare candidate functions to source-known reference
+        shell: bash
+        run: |
+          set -euo pipefail
+          declare -A files=(
+            [exact-copy]=libaarknown-exact-copy.so
+            [stripped]=libaarknown-stripped.so
+            [patched]=libaarknown-patched.so
+            [false-friend]=libaarknown-false-friend.so
+            [o0]=libaarknown-o0.so
+          )
+          for variant in exact-copy stripped patched false-friend o0; do
+            "$GHIDRA_DIR/support/analyzeHeadless"               "$BSIM_PROJECT_DIR" aar_bsim               -process "${files[$variant]}"               -scriptPath "$GITHUB_WORKSPACE/tools/ghidra"               -postScript AarBSimCompare.java                 /libaarknown.so "$GITHUB_WORKSPACE/out/bsim/$variant.json"               -analysisTimeoutPerFile 120 -max-cpu 2
+          done
+
+      - name: Evaluate incremental BSim value
+        run: |
+          python3 tools/evaluate_ghidra_bsim_goldens.py             --dir out/bsim             --out out/bsim-qualification.json
+
+      - name: Publish BSim evidence
+        if: always() && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: aar-ghidra-bsim-qualification
+          path: |
+            out/bsim/*.json
+            out/bsim-qualification.json
+          if-no-files-found: warn
+          retention-days: 14
