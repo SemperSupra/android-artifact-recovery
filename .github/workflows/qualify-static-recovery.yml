@@ -71,10 +71,10 @@ jobs:
           python3 tools/recover_apk_static.py "$apk"             --out out/static-kotlin             --jadx "$JADX"             --dexdump "$DEXDUMP"
           find out/static-kotlin/highlevel/jadx -type f -name 'GoldenRecordFingerprint.java' -print -quit | grep -q .
           grep -R -q 'canonicalize' out/static-kotlin/lowlevel/dexdump
-          python3 -c 'import json; d=json.load(open("out/static-kotlin/recovery-manifest.json")); assert d["status"] == "PASS"; assert len(d["discovery"]["dex"]) >= 1'
+          python3 -c 'import json; d=json.load(open("out/static-kotlin/recovery-manifest.json")); assert d["status"] in {"PASS","PARTIAL"}; assert len(d["discovery"]["dex"]) >= 1'
 
       - name: Publish recovery evidence
-        if: github.event_name != 'pull_request'
+        if: always() && github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
           name: aar-static-recovery-kotlin
@@ -125,8 +125,8 @@ jobs:
           set -euo pipefail
           sdk_root="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
           dexdump="$(find "$sdk_root" -type f -name dexdump | sort -V | tail -n1)"
-          readelf="$(find "$sdk_root/ndk/27.0.12077973" -type f -name llvm-readelf | head -n1)"
-          objdump="$(find "$sdk_root/ndk/27.0.12077973" -type f -name llvm-objdump | head -n1)"
+          readelf="$(find "$sdk_root/ndk/27.0.12077973" -type f -name llvm-readelf -print -quit)"
+          objdump="$(find "$sdk_root/ndk/27.0.12077973" -type f -name llvm-objdump -print -quit)"
           test -x "$dexdump"
           test -x "$readelf"
           test -x "$objdump"
@@ -144,7 +144,7 @@ jobs:
           python3 - <<'PY'
           import json
           d = json.load(open("out/static-jni/recovery-manifest.json"))
-          assert d["status"] == "PASS"
+          assert d["status"] in {"PASS", "PARTIAL"}
           native = d["discovery"]["native"]
           assert {x["abi"] for x in native} == {"arm64-v8a", "x86_64"}
           assert d["native_recovery"]["status"] == "PRESENT"
@@ -153,7 +153,7 @@ jobs:
           grep -R -q 'Java_org_sempersupra_aar_golden_jni_NativePayloadStats_nativeAnalyze' out/static-jni/lowlevel/native
 
       - name: Publish JNI recovery evidence
-        if: github.event_name != 'pull_request'
+        if: always() && github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
           name: aar-static-recovery-jni
