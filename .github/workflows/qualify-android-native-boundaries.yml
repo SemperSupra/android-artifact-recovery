@@ -1,0 +1,27 @@
+name: Qualify Android native boundary classification
+
+on:
+  pull_request:
+    paths:
+      - tools/classify_android_native_boundaries.py
+      - tests/test_android_native_boundaries.py
+      - docs/recovery/android-native-boundaries.md
+      - .github/workflows/qualify-android-native-boundaries.yml
+  push:
+    branches: [main]
+    paths:
+      - tools/classify_android_native_boundaries.py
+      - tests/test_android_native_boundaries.py
+      - docs/recovery/android-native-boundaries.md
+      - .github/workflows/qualify-android-native-boundaries.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m unittest -v tests/test_android_native_boundaries.py
