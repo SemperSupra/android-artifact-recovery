@@ -6,6 +6,15 @@ plugins {
 android {
     namespace = "org.sempersupra.aar.golden.jni"
     compileSdk = 35
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = "17"
+    }
     ndkVersion = "27.0.12077973"
 
     defaultConfig {
