@@ -7,6 +7,15 @@ android {
     namespace = "org.sempersupra.aar.golden.kotlin"
     compileSdk = 35
 
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+
     defaultConfig {
         applicationId = "org.sempersupra.aar.golden.kotlin"
         minSdk = 26
