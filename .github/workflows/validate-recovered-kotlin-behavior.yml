@@ -5,8 +5,11 @@ on:
     paths:
       - tests/fixtures/GoldenFingerprintHarness.java
       - tools/compare_behavior.py
+      - tools/repair_jadx_kotlin_java.py
       - tests/test_compare_behavior.py
+      - tests/test_repair_jadx_kotlin_java.py
       - docs/recovery/behavioral-validation.md
+      - docs/recovery/repair-assisted-kotlin.md
       - .github/workflows/validate-recovered-kotlin-behavior.yml
   push:
     branches:
@@ -27,7 +30,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - run: python3 -m unittest -v tests/test_compare_behavior.py
+      - run: python3 -m unittest -v tests/test_compare_behavior.py tests/test_repair_jadx_kotlin_java.py
 
   golden-kotlin:
     runs-on: ubuntu-24.04
@@ -150,6 +153,86 @@ jobs:
           fi
           python3 tools/compare_behavior.py "${args[@]}"
           cat out/behavior-comparison.json
+
+      - name: Apply bounded repair transform
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="out/jadx/sources/org/sempersupra/aar/golden/kotlin/GoldenRecordFingerprint.java"
+          dst="out/repaired-sources/org/sempersupra/aar/golden/kotlin/GoldenRecordFingerprint.java"
+          python3 tools/repair_jadx_kotlin_java.py \
+            --input "$src" \
+            --output "$dst" \
+            --manifest out/repair-manifest.json
+          diff -u "$src" "$dst" > out/repair.diff || true
+          cat out/repair-manifest.json
+
+      - name: Execute repair-assisted candidate
+        id: repaired
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/repaired-classes out/repaired-harness
+          cp="$KOTLIN_STDLIB"
+          if [ -n "$JETBRAINS_ANNOTATIONS" ]; then cp="$cp:$JETBRAINS_ANNOTATIONS"; fi
+          mapfile -t repaired < <(find out/repaired-sources -type f -name '*.java' | sort)
+
+          set +e
+          javac -cp "$cp" -d out/repaired-classes "${repaired[@]}" \
+            >out/repaired-javac.stdout.txt 2>out/repaired-javac.stderr.txt
+          compile_rc=$?
+          set -e
+
+          if [ "$compile_rc" -ne 0 ]; then
+            cat out/repaired-javac.stderr.txt >&2
+            echo "state=compile-failed" >> "$GITHUB_OUTPUT"
+            echo "detail=repair-assisted javac returned $compile_rc" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          javac -cp "out/repaired-classes:$cp" \
+            -d out/repaired-harness tests/fixtures/GoldenFingerprintHarness.java
+
+          set +e
+          java -cp "out/repaired-harness:out/repaired-classes:$cp" \
+            GoldenFingerprintHarness \
+            >out/repaired-observation.txt 2>out/repaired-run.stderr.txt
+          run_rc=$?
+          set -e
+
+          if [ "$run_rc" -ne 0 ]; then
+            cat out/repaired-run.stderr.txt >&2
+            echo "state=run-failed" >> "$GITHUB_OUTPUT"
+            echo "detail=repair-assisted java returned $run_rc" >> "$GITHUB_OUTPUT"
+          else
+            cat out/repaired-observation.txt
+            echo "state=executed" >> "$GITHUB_OUTPUT"
+            echo "detail=repair-assisted recovered JVM execution completed" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Compare repair-assisted behavior
+        shell: bash
+        env:
+          CANDIDATE_STATE: ${{ steps.repaired.outputs.state }}
+          CANDIDATE_DETAIL: ${{ steps.repaired.outputs.detail }}
+        run: |
+          set -euo pipefail
+          args=(
+            --original out/original-observation.txt
+            --candidate-state "$CANDIDATE_STATE"
+            --candidate-detail "$CANDIDATE_DETAIL"
+            --out out/repair-assisted-behavior-comparison.json
+          )
+          if [ "$CANDIDATE_STATE" = executed ]; then
+            args+=(--candidate out/repaired-observation.txt)
+          fi
+          python3 tools/compare_behavior.py "${args[@]}"
+          cat out/repair-assisted-behavior-comparison.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open("out/repair-assisted-behavior-comparison.json"))
+          assert d["status"] == "BEHAVIOR-MATCH", d
+          PY
 
       - name: Publish behavioral evidence
         if: always() && github.event_name != 'pull_request'
