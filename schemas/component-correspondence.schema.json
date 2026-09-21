@@ -1,0 +1,186 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sempersupra.org/aar/component-correspondence.schema.json",
+  "title": "AAR Component Correspondence",
+  "type": "object",
+  "required": ["schema", "artifact", "objects"],
+  "properties": {
+    "schema": {
+      "const": "aar-component-correspondence/v0"
+    },
+    "artifact": {
+      "type": "object",
+      "required": ["sha256"],
+      "properties": {
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "additionalProperties": true
+    },
+    "objects": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/object"
+      }
+    },
+    "unknowns": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "reason"],
+        "properties": {
+          "id": {"type": "string"},
+          "reason": {"type": "string"}
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "$defs": {
+    "evidence": {
+      "type": "object",
+      "required": ["family", "producer", "detail"],
+      "properties": {
+        "family": {
+          "enum": [
+            "exact-hash",
+            "package-metadata",
+            "namespace",
+            "soname",
+            "build-id",
+            "symbol",
+            "version-string",
+            "license-notice",
+            "reproducible-build",
+            "fid",
+            "bsim",
+            "source-correspondence",
+            "other"
+          ]
+        },
+        "producer": {"type": "string"},
+        "detail": {"type": "string"},
+        "reference_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "additionalProperties": true
+    },
+    "coverage": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "enum": [
+            "WHOLE_OBJECT",
+            "CLASS_SET",
+            "METHOD_SET",
+            "FUNCTION_SET",
+            "BYTE_REGION"
+          ]
+        },
+        "members": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "claim": {
+      "type": "object",
+      "required": [
+        "component_id",
+        "component_name",
+        "identity_state",
+        "coverage",
+        "modification_state",
+        "reference_provenance_class",
+        "evidence",
+        "disposition",
+        "boundary_analysis_required"
+      ],
+      "properties": {
+        "component_id": {"type": "string"},
+        "component_name": {"type": "string"},
+        "version": {"type": ["string", "null"]},
+        "purl": {"type": ["string", "null"]},
+        "source_ref": {"type": ["string", "null"]},
+        "identity_state": {
+          "enum": [
+            "EXACT_BYTES",
+            "REPRODUCIBLE_EQUIVALENT",
+            "STRONG_CORRESPONDENCE",
+            "FAMILY_MATCH",
+            "UNKNOWN"
+          ]
+        },
+        "coverage": {"$ref": "#/$defs/coverage"},
+        "modification_state": {
+          "enum": [
+            "UNMODIFIED",
+            "MODIFIED_DERIVATIVE",
+            "BUILD_VARIANT",
+            "UNKNOWN"
+          ]
+        },
+        "reference_provenance_class": {
+          "enum": ["R0", "R1", "R2", "R3", "R4", "R5"]
+        },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/evidence"}
+        },
+        "disposition": {
+          "enum": [
+            "REFERENCE_ONLY",
+            "BOUNDARY_ANALYSIS",
+            "DELTA_RECOVERY",
+            "RESIDUAL_RECOVERY"
+          ]
+        },
+        "boundary_analysis_required": {"type": "boolean"}
+      },
+      "additionalProperties": true
+    },
+    "object": {
+      "type": "object",
+      "required": ["object_id", "kind", "sha256", "claims", "residual_state"],
+      "properties": {
+        "object_id": {"type": "string"},
+        "kind": {
+          "enum": [
+            "dex",
+            "elf",
+            "javascript",
+            "wasm",
+            "archive",
+            "other"
+          ]
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "archive_path": {"type": ["string", "null"]},
+        "claims": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/claim"}
+        },
+        "residual_state": {
+          "enum": [
+            "KNOWN_REFERENCE",
+            "DELTA",
+            "RESIDUAL",
+            "UNKNOWN"
+          ]
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}
