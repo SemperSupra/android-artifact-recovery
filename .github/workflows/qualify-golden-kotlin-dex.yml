@@ -1,0 +1,60 @@
+name: Qualify golden Kotlin DEX workload
+
+on:
+  pull_request:
+    paths:
+      - goldens/kotlin-dex/**
+      - .github/workflows/qualify-golden-kotlin-dex.yml
+  push:
+    branches:
+      - main
+    paths:
+      - goldens/kotlin-dex/**
+      - .github/workflows/qualify-golden-kotlin-dex.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: goldens/kotlin-dex
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+
+      - name: Test and build source-known APK
+        run: gradle --no-daemon testReleaseUnitTest assembleRelease
+
+      - name: Inventory APK code-bearing entries
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="$(find app/build/outputs/apk/release -type f -name '*.apk' | head -n1)"
+          test -n "$apk"
+          sha256sum "$apk" | tee apk.sha256
+          unzip -l "$apk" | tee apk-contents.txt
+          unzip -l "$apk" | grep -q 'classes.dex'
+
+      - name: Publish golden APK evidence
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: aar-golden-kotlin-dex
+          path: |
+            goldens/kotlin-dex/app/build/outputs/apk/release/*.apk
+            goldens/kotlin-dex/apk.sha256
+            goldens/kotlin-dex/apk-contents.txt
+          if-no-files-found: error
+          retention-days: 7
