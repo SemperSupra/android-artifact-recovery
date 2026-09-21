@@ -24,7 +24,7 @@ SEMVER_RE = re.compile(r"\b\d+\.\d+(?:\.\d+)?(?:[-+._][0-9A-Za-z.-]+)?\b")
 
 KNOWN_PATTERNS = [
     ("openssl", re.compile(r"\bOpenSSL\s+([0-9]+\.[0-9]+\.[0-9]+[a-z]?(?:[-+._][0-9A-Za-z.-]+)?)\b", re.I)),
-    ("ffmpeg", re.compile(r"\bFFmpeg\s+version\s+([^\s]+)", re.I)),
+    ("ffmpeg", re.compile(r"\bFFmpeg\s+version\s+([0-9]+\.[0-9]+(?:\.[0-9]+)?(?:[-+._][0-9A-Za-z.-]+)?)\b", re.I)),
     ("opus", re.compile(r"\b(?:lib)?opus(?:\s+version)?\s*([0-9]+\.[0-9]+(?:\.[0-9]+)?)\b", re.I)),
     ("sqlite", re.compile(r"\bSQLite\s+version\s+([0-9]+\.[0-9]+(?:\.[0-9]+)?)\b", re.I)),
     ("protobuf", re.compile(r"\bprotobuf(?:\s+version)?\s*([0-9]+\.[0-9]+(?:\.[0-9]+)?)\b", re.I)),

@@ -50,6 +50,34 @@ class ReferenceHintTests(unittest.TestCase):
             self.assertIn(("npm", "source-path-package", "react-native"), values)
             self.assertIn(("openssl", "version", "1.1.1w"), values)
 
+
+    def test_ffmpeg_nonversion_phrase_is_rejected(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            apk = root / "sample.apk"
+            elf = (
+                b"\x7fELF" + b"\x00" * 128 +
+                b"FFmpeg version 4.4.2 Copyright..." + b"\x00" +
+                b"Use FFmpeg version to configure this component" + b"\x00"
+            )
+            with zipfile.ZipFile(apk, "w") as z:
+                z.writestr("lib/arm64-v8a/libavutil.so", elf)
+            out = root / "hints.json"
+            cp = subprocess.run(
+                [sys.executable, str(SCRIPT), str(apk), "--out", str(out)],
+                text=True, capture_output=True
+            )
+            self.assertEqual(cp.returncode, 0, cp.stderr)
+            doc = json.loads(out.read_text())
+            ffmpeg = [
+                h["value"]
+                for obj in doc["objects"]
+                for h in obj["hints"]
+                if h["family"] == "ffmpeg"
+            ]
+            self.assertEqual(ffmpeg, ["4.4.2"])
+
+
     def test_large_entry_is_explicitly_skipped(self):
         with tempfile.TemporaryDirectory() as td:
             root = pathlib.Path(td)
