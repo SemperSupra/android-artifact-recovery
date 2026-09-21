@@ -76,8 +76,27 @@ jobs:
           set -euo pipefail
           mkdir -p out/query "$RUNNER_TEMP/aar-fid-projects"
           db="$RUNNER_TEMP/aar-known.fidb"
-          "$GHIDRA_DIR/support/analyzeHeadless"             "$RUNNER_TEMP/aar-fid-projects" aar_fid_reference             -import "$GITHUB_WORKSPACE/goldens/component-attribution/native/build/libaarknown.so"             -scriptPath "$GITHUB_WORKSPACE/tools/ghidra"             -postScript AarCreateFidReference.java               "$db" "$FID_FAMILY" "$FID_VERSION" "$FID_VARIANT"               "$GITHUB_WORKSPACE/out/reference.json"             -analysisTimeoutPerFile 120             -max-cpu 2             -deleteProject
+
+          # FID ingestion needs a saved DomainFile identity. Import/save first,
+          # then populate from a second headless process pass.
+          "$GHIDRA_DIR/support/analyzeHeadless" \
+            "$RUNNER_TEMP/aar-fid-projects" aar_fid_reference \
+            -import "$GITHUB_WORKSPACE/goldens/component-attribution/native/build/libaarknown.so" \
+            -analysisTimeoutPerFile 120 \
+            -max-cpu 2
+
+          "$GHIDRA_DIR/support/analyzeHeadless" \
+            "$RUNNER_TEMP/aar-fid-projects" aar_fid_reference \
+            -process libaarknown.so \
+            -scriptPath "$GITHUB_WORKSPACE/tools/ghidra" \
+            -postScript AarCreateFidReference.java \
+              "$db" "$FID_FAMILY" "$FID_VERSION" "$FID_VARIANT" \
+              "$GITHUB_WORKSPACE/out/reference.json" \
+            -analysisTimeoutPerFile 120 \
+            -max-cpu 2
+
           test -s "$db"
+          test -s out/reference.json
           sha256sum "$db" | tee out/reference-fidb.sha256
           echo "FID_DB=$db" >> "$GITHUB_ENV"
 
