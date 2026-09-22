@@ -1,0 +1,30 @@
+name: Qualify DEX reference candidate scoring
+
+on:
+  pull_request:
+    paths:
+      - tools/score_dex_reference_candidates.py
+      - tests/test_dex_reference_candidates.py
+      - docs/recovery/dex-reference-candidates.md
+      - .github/workflows/qualify-dex-reference-candidates.yml
+  push:
+    branches: [main]
+    paths:
+      - tools/score_dex_reference_candidates.py
+      - tests/test_dex_reference_candidates.py
+      - docs/recovery/dex-reference-candidates.md
+      - .github/workflows/qualify-dex-reference-candidates.yml
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Run candidate-scoring qualification
+        run: python -m unittest tests.test_dex_reference_candidates -v
