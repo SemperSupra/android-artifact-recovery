@@ -98,5 +98,32 @@ class ReferenceHintTests(unittest.TestCase):
             self.assertEqual(doc["skipped"][0]["state"], "SKIPPED_BOUND")
 
 
+    def test_ffmpeg_non_version_word_is_not_a_candidate(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            apk = root / "sample.apk"
+            elf = (
+                b"\x7fELF" + b"\x00" * 64 +
+                b"FFmpeg version to enable runtime diagnostics\x00" +
+                b"FFmpeg version 4.4.2 Copyright\x00"
+            )
+            with zipfile.ZipFile(apk, "w") as z:
+                z.writestr("lib/arm64-v8a/libavutil.so", elf)
+            out = root / "hints.json"
+            cp = subprocess.run(
+                [sys.executable, str(SCRIPT), str(apk), "--out", str(out)],
+                text=True, capture_output=True
+            )
+            self.assertEqual(cp.returncode, 0, cp.stderr)
+            doc = json.loads(out.read_text())
+            values = [
+                (h["family"], h["kind"], h["value"])
+                for obj in doc["objects"]
+                for h in obj["hints"]
+            ]
+            self.assertIn(("ffmpeg", "version", "4.4.2"), values)
+            self.assertNotIn(("ffmpeg", "version", "to"), values)
+
+
 if __name__ == "__main__":
     unittest.main()
