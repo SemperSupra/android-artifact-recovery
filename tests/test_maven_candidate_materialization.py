@@ -89,6 +89,24 @@ class MavenCandidateMaterializerTests(unittest.TestCase):
             with self.assertRaises(MOD.RequestError):
                 MOD.validate_request(req)
 
+    def test_rejects_path_like_id_and_classifier(self):
+        base = {
+            "schema": "aar-maven-candidate-request/v0",
+            "candidates": [{
+                "id": "../escape",
+                "repository": "https://repo.example/maven2",
+                "group_id": "a.b",
+                "artifact_id": "c",
+                "version": "1.0.0",
+            }],
+        }
+        with self.assertRaises(MOD.RequestError):
+            MOD.validate_request(base)
+        base["candidates"][0]["id"] = "safe"
+        base["candidates"][0]["classifier"] = "../../escape"
+        with self.assertRaises(MOD.RequestError):
+            MOD.validate_request(base)
+
     def test_does_not_resolve_transitives(self):
         req = {
             "schema": "aar-maven-candidate-request/v0",
