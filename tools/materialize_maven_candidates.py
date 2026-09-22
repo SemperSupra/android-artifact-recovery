@@ -18,7 +18,8 @@ import urllib.request
 from typing import Any, Callable
 
 ALLOWED_PACKAGING = {"jar", "aar"}
-EXACT_VERSION_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+SAFE_TOKEN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+EXACT_VERSION_RE = SAFE_TOKEN_RE
 
 
 class RequestError(ValueError):
@@ -41,12 +42,16 @@ def validate_request(doc: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(c, dict):
             raise RequestError("candidate must be an object")
         cid = c.get("id")
-        if not isinstance(cid, str) or not cid or cid in seen:
+        if not isinstance(cid, str) or not SAFE_TOKEN_RE.fullmatch(cid) or cid in seen:
             raise RequestError(f"invalid/duplicate candidate id: {cid!r}")
         seen.add(cid)
         for field in ("repository", "group_id", "artifact_id", "version"):
             if not isinstance(c.get(field), str) or not c[field]:
                 raise RequestError(f"{cid}: missing {field}")
+        if not all(SAFE_TOKEN_RE.fullmatch(part) for part in c["group_id"].split(".")):
+            raise RequestError(f"{cid}: invalid group_id")
+        if not SAFE_TOKEN_RE.fullmatch(c["artifact_id"]):
+            raise RequestError(f"{cid}: invalid artifact_id")
         if not c["repository"].startswith("https://"):
             raise RequestError(f"{cid}: repository must use https")
         version = c["version"]
@@ -55,6 +60,9 @@ def validate_request(doc: dict[str, Any]) -> dict[str, Any]:
         packaging = c.get("packaging", "jar")
         if packaging not in ALLOWED_PACKAGING:
             raise RequestError(f"{cid}: unsupported packaging {packaging!r}")
+        classifier = c.get("classifier")
+        if classifier is not None and (not isinstance(classifier, str) or not SAFE_TOKEN_RE.fullmatch(classifier)):
+            raise RequestError(f"{cid}: invalid classifier")
         expected = c.get("expected_sha256")
         if expected is not None and (not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected)):
             raise RequestError(f"{cid}: expected_sha256 must be lowercase SHA-256")
