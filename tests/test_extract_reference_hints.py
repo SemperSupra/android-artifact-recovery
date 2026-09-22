@@ -125,5 +125,56 @@ class ReferenceHintTests(unittest.TestCase):
             self.assertNotIn(("ffmpeg", "version", "to"), values)
 
 
+    def test_retained_version_files_emit_candidates_and_reject_malformed_values(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            apk = root / "sample.apk"
+            with zipfile.ZipFile(apk, "w") as z:
+                z.writestr("META-INF/androidx.camera_camera-core.version", b"1.4.2")
+                z.writestr(
+                    "META-INF/androidx.lifecycle_lifecycle-runtime.version",
+                    b"task ':lifecycle:lifecycle-runtime:writeVersionFile' property 'version'",
+                )
+
+            out = root / "hints.json"
+            cp = subprocess.run(
+                [sys.executable, str(SCRIPT), str(apk), "--out", str(out)],
+                text=True, capture_output=True
+            )
+            self.assertEqual(cp.returncode, 0, cp.stderr)
+            doc = json.loads(out.read_text())
+            hints = [
+                h
+                for obj in doc["objects"]
+                for h in obj["hints"]
+            ]
+
+            self.assertTrue(any(
+                h["family"] == "retained-version"
+                and h["kind"] == "module-version"
+                and h["value"] == "androidx.camera_camera-core@1.4.2"
+                and h["state"] == "CANDIDATE"
+                for h in hints
+            ))
+            self.assertTrue(any(
+                h["family"] == "maven"
+                and h["kind"] == "gav"
+                and h["value"] == "androidx.camera:camera-core:1.4.2"
+                and h["state"] == "CANDIDATE"
+                for h in hints
+            ))
+            self.assertTrue(any(
+                h["family"] == "retained-version"
+                and h["kind"] == "rejected-version-value"
+                and h["state"] == "REJECTED"
+                for h in hints
+            ))
+            self.assertFalse(any(
+                h["family"] == "maven"
+                and "lifecycle-runtime" in h["value"]
+                for h in hints
+            ))
+
+
 if __name__ == "__main__":
     unittest.main()

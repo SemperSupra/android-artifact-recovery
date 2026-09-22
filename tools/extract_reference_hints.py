@@ -21,6 +21,8 @@ POM_PROPS_RE = re.compile(
 PACKAGE_JSON_KEYS = ("name", "version")
 SOURCE_PATH_RE = re.compile(r"(?:^|[/\\])node_modules[/\\](@[^/\\\\\"'\\s]+[/\\][^/\\\\\"'\\s]+|[^/\\\\\"'\\s]+)")
 SEMVER_RE = re.compile(r"\b\d+\.\d+(?:\.\d+)?(?:[-+._][0-9A-Za-z.-]+)?\b")
+RETAINED_VERSION_VALUE_RE = re.compile(r"^\d+(?:\.\d+){1,3}(?:[-+._][0-9A-Za-z.-]+)?$")
+RETAINED_VERSION_FILE_RE = re.compile(r"^META-INF/(.+)\.version$", re.I)
 
 KNOWN_PATTERNS = [
     ("openssl", re.compile(r"\bOpenSSL\s+([0-9]+\.[0-9]+\.[0-9]+[a-z]?(?:[-+._][0-9A-Za-z.-]+)?)\b", re.I)),
@@ -67,7 +69,8 @@ def printable_strings(data: bytes) -> list[str]:
 
 
 def add_hint(hints: list[dict[str, Any]], seen: set[tuple[str, str, str]], *,
-             family: str, kind: str, value: str, evidence: str) -> None:
+             family: str, kind: str, value: str, evidence: str,
+             state: str = "CANDIDATE") -> None:
     key = (family, kind, value)
     if key in seen or len(hints) >= MAX_HINTS_PER_OBJECT:
         return
@@ -77,6 +80,7 @@ def add_hint(hints: list[dict[str, Any]], seen: set[tuple[str, str, str]], *,
         "kind": kind,
         "value": value,
         "evidence": evidence,
+        "state": state,
     })
 
 
@@ -89,6 +93,39 @@ def metadata_hints(name: str, data: bytes) -> list[dict[str, Any]]:
     text = data.decode("utf-8", "replace")
     hints: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str]] = set()
+
+    retained = RETAINED_VERSION_FILE_RE.match(name)
+    if retained:
+        module_key = retained.group(1)
+        value = text.strip()
+        if RETAINED_VERSION_VALUE_RE.fullmatch(value):
+            add_hint(
+                hints, seen,
+                family="retained-version",
+                kind="module-version",
+                value=f"{module_key}@{value}",
+                evidence=name,
+            )
+            if "_" in module_key:
+                group, artifact = module_key.split("_", 1)
+                if "." in group and artifact:
+                    add_hint(
+                        hints, seen,
+                        family="maven",
+                        kind="gav",
+                        value=f"{group}:{artifact}:{value}",
+                        evidence=name,
+                    )
+        else:
+            rejected = value[:200] if value else "<empty>"
+            add_hint(
+                hints, seen,
+                family="retained-version",
+                kind="rejected-version-value",
+                value=rejected,
+                evidence=name,
+                state="REJECTED",
+            )
 
     if lower.endswith("pom.properties"):
         props = dict(POM_PROPS_RE.findall(text))
