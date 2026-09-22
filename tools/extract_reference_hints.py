@@ -67,7 +67,8 @@ def printable_strings(data: bytes) -> list[str]:
 
 
 def add_hint(hints: list[dict[str, Any]], seen: set[tuple[str, str, str]], *,
-             family: str, kind: str, value: str, evidence: str) -> None:
+             family: str, kind: str, value: str, evidence: str,
+             state: str = "CANDIDATE") -> None:
     key = (family, kind, value)
     if key in seen or len(hints) >= MAX_HINTS_PER_OBJECT:
         return
@@ -77,6 +78,7 @@ def add_hint(hints: list[dict[str, Any]], seen: set[tuple[str, str, str]], *,
         "kind": kind,
         "value": value,
         "evidence": evidence,
+        "state": state,
     })
 
 
@@ -89,6 +91,39 @@ def metadata_hints(name: str, data: bytes) -> list[dict[str, Any]]:
     text = data.decode("utf-8", "replace")
     hints: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str]] = set()
+
+    retained = RETAINED_VERSION_FILE_RE.match(name)
+    if retained:
+        module_key = retained.group(1)
+        value = text.strip()
+        if RETAINED_VERSION_VALUE_RE.fullmatch(value):
+            add_hint(
+                hints, seen,
+                family="retained-version",
+                kind="module-version",
+                value=f"{module_key}@{value}",
+                evidence=name,
+            )
+            if "_" in module_key:
+                group, artifact = module_key.split("_", 1)
+                if "." in group and artifact:
+                    add_hint(
+                        hints, seen,
+                        family="maven",
+                        kind="gav",
+                        value=f"{group}:{artifact}:{value}",
+                        evidence=name,
+                    )
+        else:
+            rejected = value[:200] if value else "<empty>"
+            add_hint(
+                hints, seen,
+                family="retained-version",
+                kind="rejected-version-value",
+                value=rejected,
+                evidence=name,
+                state="REJECTED",
+            )
 
     if lower.endswith("pom.properties"):
         props = dict(POM_PROPS_RE.findall(text))
