@@ -21,6 +21,8 @@ POM_PROPS_RE = re.compile(
 PACKAGE_JSON_KEYS = ("name", "version")
 SOURCE_PATH_RE = re.compile(r"(?:^|[/\\])node_modules[/\\](@[^/\\\\\"'\\s]+[/\\][^/\\\\\"'\\s]+|[^/\\\\\"'\\s]+)")
 SEMVER_RE = re.compile(r"\b\d+\.\d+(?:\.\d+)?(?:[-+._][0-9A-Za-z.-]+)?\b")
+RETAINED_VERSION_VALUE_RE = re.compile(r"^\\d+(?:\\.\\d+){1,3}(?:[-+._][0-9A-Za-z.-]+)?$")
+RETAINED_VERSION_FILE_RE = re.compile(r"^META-INF/(.+)\\.version$", re.I)
 
 KNOWN_PATTERNS = [
     ("openssl", re.compile(r"\bOpenSSL\s+([0-9]+\.[0-9]+\.[0-9]+[a-z]?(?:[-+._][0-9A-Za-z.-]+)?)\b", re.I)),
