@@ -1,0 +1,30 @@
+name: Qualify explicit Maven candidate materialization
+
+on:
+  pull_request:
+    paths:
+      - tools/materialize_maven_candidates.py
+      - tests/test_maven_candidate_materialization.py
+      - docs/recovery/maven-candidate-materialization.md
+      - .github/workflows/qualify-maven-candidate-materialization.yml
+  push:
+    branches: [main]
+    paths:
+      - tools/materialize_maven_candidates.py
+      - tests/test_maven_candidate_materialization.py
+      - docs/recovery/maven-candidate-materialization.md
+      - .github/workflows/qualify-maven-candidate-materialization.yml
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Run bounded candidate materializer tests
+        run: python -m unittest tests.test_maven_candidate_materialization -v
