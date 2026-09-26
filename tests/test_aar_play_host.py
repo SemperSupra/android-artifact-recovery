@@ -103,6 +103,25 @@ class PlayHostTests(unittest.TestCase):
         self.assertNotIn("-E", prefix)
 
 
+    def test_windows_runtime_process_cleanup_is_scoped_to_runtime_path(self):
+        result = mock.Mock(
+            returncode=0,
+            stdout='[{"Pid":123,"Path":"C:\\\\runtime\\\\sdk\\\\emulator\\\\emulator.exe","Stopped":true}]',
+            stderr="",
+        )
+        with mock.patch.object(HOST.platform, "system", return_value="Windows"), mock.patch.object(
+            HOST.shutil, "which", return_value="powershell.exe"
+        ), mock.patch.object(HOST, "run", return_value=result) as runner:
+            observed = HOST.stop_runtime_processes_windows(pathlib.Path(r"C:\runtime"))
+        self.assertTrue(observed["attempted"])
+        self.assertEqual(len(observed["terminated"]), 1)
+        argv = runner.call_args.args[0]
+        self.assertIn("powershell.exe", argv[0])
+        command = argv[-1]
+        self.assertIn(r"C:\runtime", command)
+        self.assertIn("ExecutablePath.StartsWith", command)
+        self.assertNotIn("Get-Process emulator", command)
+
     def test_linux_runtime_ownership_restore_is_narrow(self):
         result = mock.Mock(returncode=0, stdout="", stderr="")
         with mock.patch.object(HOST.os, "getuid", return_value=1001, create=True), mock.patch.object(
