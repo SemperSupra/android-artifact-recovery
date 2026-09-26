@@ -74,6 +74,29 @@ class PlayHostTests(unittest.TestCase):
                 HOST.create_plan(pathlib.Path(td), False)
             self.assertEqual(ctx.exception.failure_type, "license_acceptance_required")
 
+    def test_existing_healthy_runtime_plans_as_noop_without_license_reacceptance(self):
+        with tempfile.TemporaryDirectory() as td:
+            state = pathlib.Path(td)
+            runtime = state / "runtime" / "linux-x86_64"
+            config = runtime / "avd" / "aar-play-api35-x86_64.avd" / "config.ini"
+            config.parent.mkdir(parents=True)
+            config.write_text("hw.keyboard=yes\n", encoding="utf-8")
+            lock = {"profiles": {"linux-x86_64": {"os": "linux", "arch": "x86_64", "image_abi": "x86_64", "acceleration": "KVM"}}}
+            identity = {"identity_sha256": "1" * 64}
+            with mock.patch.object(HOST, "load_lock", return_value=lock), mock.patch.object(
+                HOST, "host_profile", return_value=("linux-x86_64", lock["profiles"]["linux-x86_64"])
+            ), mock.patch.object(HOST, "critical_identity", return_value=identity), mock.patch.object(
+                HOST, "sha256_file", return_value="2" * 64
+            ):
+                receipt = HOST.create_plan(state, False)
+            self.assertEqual(receipt["status"], "no-op-planned")
+            self.assertEqual(receipt["evidence"]["plan_mode"], "verify-existing")
+            plan = HOST.read_json(pathlib.Path(receipt["evidence"]["plan"]))
+            self.assertEqual(plan["status"], "applied")
+            self.assertEqual(plan["mutations"], [])
+            self.assertEqual(plan["toolchain_identity"], identity)
+
+
 
     def test_optional_memory_sensor_fails_open_on_probe_timeout(self):
         with mock.patch.object(
