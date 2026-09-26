@@ -797,6 +797,24 @@ def emulator_command_prefix(env: dict[str, str], emulator_sudo: bool) -> list[st
     return ["sudo", "-n", "env", *assignments]
 
 
+def restore_runtime_ownership(runtime: pathlib.Path) -> dict[str, Any]:
+    """Return Linux venue-adapter files to the invoking user after an elevated emulator."""
+    if not hasattr(os, "getuid") or not hasattr(os, "getgid"):
+        return {"passed": False, "reason": "posix_identity_unavailable"}
+    uid = os.getuid()
+    gid = os.getgid()
+    cp = run(
+        ["sudo", "-n", "chown", "-R", f"{uid}:{gid}", str(runtime)],
+        timeout=60,
+        check=False,
+    )
+    return {
+        "passed": cp.returncode == 0,
+        "exit_code": cp.returncode,
+        "stderr_tail": cp.stderr.strip()[-500:] or None,
+    }
+
+
 def verify(
     plan_path: pathlib.Path,
     state_root: pathlib.Path,
@@ -888,6 +906,7 @@ def verify(
     log = None
     serial = None
     boot_completed = False
+    ownership_restore: dict[str, Any] | None = None
     try:
         log = log_path.open("w", encoding="utf-8")
         popen_kwargs: dict[str, Any] = {}
@@ -988,6 +1007,18 @@ def verify(
         if log is not None:
             log.close()
         run([str(adb), "kill-server"], env=env, timeout=20, check=False)
+        if emulator_sudo:
+            ownership_restore = restore_runtime_ownership(runtime)
+
+    if emulator_sudo and (not ownership_restore or not ownership_restore.get("passed")):
+        raise AarHostError(
+            "Linux KVM venue adapter could not restore project-local runtime ownership",
+            failure_type="venue_adapter_cleanup_failed",
+            exit_code=EXIT_VENUE,
+            evidence={"ownership_restore": ownership_restore},
+        )
+    if ownership_restore is not None:
+        evidence["ownership_restore"] = ownership_restore
 
     plan["status"] = "verified"
     plan["verified_at"] = utcnow()
