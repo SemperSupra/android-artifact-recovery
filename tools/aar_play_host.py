@@ -165,7 +165,7 @@ def memory_bytes(os_name: str) -> int | None:
             )
             return int(cp.stdout.strip()) if cp.returncode == 0 and cp.stdout.strip().isdigit() else None
         return int(os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE"))
-    except (OSError, ValueError):
+    except (OSError, ValueError, AarHostError):
         return None
 
 
