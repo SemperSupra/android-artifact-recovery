@@ -52,6 +52,13 @@ class PlayHostTests(unittest.TestCase):
         self.assertFalse(HOST.emulator_accel_ok("acceleration is not supported", 0))
         self.assertFalse(HOST.emulator_accel_ok("anything", 1))
 
+    def test_emulator_venue_failure_classifies_hvf_unsupported(self):
+        self.assertEqual(
+            HOST.emulator_venue_failure("HVF error: HV_UNSUPPORTED\nfailed to initialize HVF"),
+            "hypervisor_framework_unavailable",
+        )
+        self.assertIsNone(HOST.emulator_venue_failure("normal emulator startup"))
+
     def test_safe_zip_rejects_parent_escape(self):
         with tempfile.TemporaryDirectory() as td:
             root = pathlib.Path(td)
