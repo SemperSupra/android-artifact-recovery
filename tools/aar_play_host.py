@@ -391,6 +391,14 @@ def install_archive(archive: pathlib.Path, destination: pathlib.Path) -> None:
         shutil.rmtree(staging, ignore_errors=True)
 
 
+def ensure_unix_executable_tree(root: pathlib.Path, os_name: str) -> None:
+    if os_name == "windows":
+        return
+    for item in root.rglob("*"):
+        if item.is_file():
+            item.chmod(item.stat().st_mode | 0o100)
+
+
 def source_properties(path: pathlib.Path) -> dict[str, str]:
     values: dict[str, str] = {}
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -619,6 +627,7 @@ def apply(plan_path: pathlib.Path, state_root: pathlib.Path) -> dict[str, Any]:
     cmd_dest.parent.mkdir(parents=True, exist_ok=True)
     cmd_source.rename(cmd_dest)
     shutil.rmtree(cmd_stage, ignore_errors=True)
+    ensure_unix_executable_tree(cmd_dest / "bin", profile["os"])
 
     emu_stage = runtime / "emulator-unpack"
     safe_extract_zip(emu_archive, emu_stage)
@@ -629,6 +638,7 @@ def apply(plan_path: pathlib.Path, state_root: pathlib.Path) -> dict[str, Any]:
     emu_dest.parent.mkdir(parents=True, exist_ok=True)
     emu_source.rename(emu_dest)
     shutil.rmtree(emu_stage, ignore_errors=True)
+    ensure_unix_executable_tree(emu_dest, profile["os"])
 
     env = process_env(runtime, profile)
     sdkmanager = sdkmanager_path(runtime, profile)
@@ -975,23 +985,25 @@ def main() -> int:
             emit(receipt, args.format)
             return 0
         raise AarHostError("unhandled command", failure_type="internal")
-    except AarHostError as exc:
+    except (AarHostError, OSError, zipfile.BadZipFile, tarfile.TarError, json.JSONDecodeError) as exc:
         lock = load_lock()
         try:
             key, profile = host_profile(lock)
         except AarHostError:
             key, profile = None, None
+        failure_type = exc.failure_type if isinstance(exc, AarHostError) else "io_or_archive_error"
+        exit_code = exc.exit_code if isinstance(exc, AarHostError) else EXIT_FAILURE
         receipt = base_receipt(args.command, key, profile, state_root)
         receipt.update(
             status="failed",
             result_class="FAIL",
-            failure_type=exc.failure_type,
+            failure_type=failure_type,
             next_action="inspect receipt and durable evidence before retry",
         )
         receipt["evidence"]["error"] = str(exc)
         write_receipt(state_root, receipt)
         emit(receipt, args.format)
-        return exc.exit_code
+        return exit_code
 
 
 if __name__ == "__main__":
