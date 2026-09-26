@@ -105,8 +105,8 @@ class PlayHostTests(unittest.TestCase):
 
     def test_linux_runtime_ownership_restore_is_narrow(self):
         result = mock.Mock(returncode=0, stdout="", stderr="")
-        with mock.patch.object(HOST.os, "getuid", return_value=1001), mock.patch.object(
-            HOST.os, "getgid", return_value=1002
+        with mock.patch.object(HOST.os, "getuid", return_value=1001, create=True), mock.patch.object(
+            HOST.os, "getgid", return_value=1002, create=True
         ), mock.patch.object(HOST, "run", return_value=result) as runner:
             observed = HOST.restore_runtime_ownership(pathlib.Path("/tmp/aar-runtime"))
         self.assertTrue(observed["passed"])
