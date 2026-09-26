@@ -1050,6 +1050,46 @@ def cleanup(plan_path: pathlib.Path, state_root: pathlib.Path) -> dict[str, Any]
     return receipt
 
 
+def interface_contract() -> dict[str, Any]:
+    lock = load_lock()
+    return {
+        "schema": "aar-play-host-interface/v1",
+        "lifecycle": ["observe", "plan", "apply", "verify", "cleanup"],
+        "audiences": {
+            "human": {
+                "default_format": "human",
+                "behavior": "concise status + typed failure + next action",
+            },
+            "automation": {
+                "format": "json",
+                "receipt_schema": SCHEMA,
+                "exit_codes": {
+                    "0": "success",
+                    str(EXIT_UNSUPPORTED): "unsupported_host",
+                    str(EXIT_VENUE): "venue_limitation",
+                    str(EXIT_FAILURE): "failure",
+                },
+                "idempotency": "second apply validates exact toolchain identity and returns no-op",
+            },
+            "agent": {
+                "discover": "contract --format json",
+                "observe": "observe --format json",
+                "plan": "plan --accept-sdk-licenses --format json",
+                "mutations": ["apply", "cleanup"],
+                "verification": "verify",
+                "authority_rule": "visibility/tool access never implies authority; apply requires an exact plan",
+            },
+        },
+        "state": {
+            "scope": "project-local",
+            "plan_binding": ["lock_sha256", "implementation_sha256", "host_profile"],
+            "credentials": "not materialized by this host bootstrap",
+        },
+        "supported_profiles": lock.get("profiles", {}),
+        "unsupported_profiles": lock.get("unsupported", {}),
+    }
+
+
 def emit(receipt: dict[str, Any], fmt: str) -> None:
     if fmt == "json":
         print(json.dumps(receipt, indent=2, sort_keys=True))
@@ -1069,6 +1109,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--state-root", type=pathlib.Path, default=DEFAULT_STATE)
     p.add_argument("--format", choices=("human", "json"), default="human")
     sub = p.add_subparsers(dest="command", required=True)
+    sub.add_parser("contract")
     sub.add_parser("observe")
     plan_parser = sub.add_parser("plan")
     plan_parser.add_argument("--accept-sdk-licenses", action="store_true")
@@ -1089,6 +1130,16 @@ def main() -> int:
     args = parser().parse_args()
     state_root = args.state_root.resolve()
     try:
+        if args.command == "contract":
+            value = interface_contract()
+            if args.format == "json":
+                print(json.dumps(value, indent=2, sort_keys=True))
+            else:
+                profiles = ", ".join(sorted(value["supported_profiles"]))
+                print("AAR Play Host interface | observe -> plan -> apply -> verify -> cleanup")
+                print("supported:", profiles)
+                print("automation/agents: use --format json; agents may call contract --format json")
+            return 0
         if args.command == "observe":
             receipt = observe(state_root)
             emit(receipt, args.format)
