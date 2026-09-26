@@ -779,6 +779,24 @@ def stop_emulator_process(
         pass
 
 
+def emulator_command_prefix(env: dict[str, str], emulator_sudo: bool) -> list[str]:
+    if not emulator_sudo:
+        return []
+    keys = (
+        "HOME",
+        "PATH",
+        "JAVA_HOME",
+        "ANDROID_HOME",
+        "ANDROID_SDK_ROOT",
+        "ANDROID_AVD_HOME",
+        "ANDROID_USER_HOME",
+        "ANDROID_EMULATOR_HOME",
+        "ANDROID_SDK_HOME",
+    )
+    assignments = [f"{key}={env[key]}" for key in keys if env.get(key)]
+    return ["sudo", "-n", "env", *assignments]
+
+
 def verify(
     plan_path: pathlib.Path,
     state_root: pathlib.Path,
@@ -801,7 +819,8 @@ def verify(
     emulator = sdk / "emulator" / executable("emulator", profile["os"])
     adb = sdk / "platform-tools" / executable("adb", profile["os"])
 
-    accel = run([str(emulator), "-accel-check"], env=env, timeout=60, check=False)
+    accel_prefix = emulator_command_prefix(env, emulator_sudo)
+    accel = run([*accel_prefix, str(emulator), "-accel-check"], env=env, timeout=60, check=False)
     accel_text = (accel.stdout + "\n" + accel.stderr).strip()
     if not emulator_accel_ok(accel_text, accel.returncode):
         plan["status"] = "venue_limitation"
@@ -876,7 +895,7 @@ def verify(
             popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
         else:
             popen_kwargs["start_new_session"] = True
-        launch_command = (["sudo", "-n", "-E"] + command) if emulator_sudo else command
+        launch_command = [*emulator_command_prefix(env, emulator_sudo), *command]
         proc = subprocess.Popen(
             launch_command,
             env=env,
