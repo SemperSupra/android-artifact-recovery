@@ -727,6 +727,21 @@ def emulator_accel_ok(output: str, returncode: int) -> bool:
     return not any(marker in lower for marker in negative)
 
 
+def emulator_venue_failure(log_text: str | None) -> str | None:
+    lower = (log_text or "").casefold()
+    markers = {
+        "hv_unsupported": "hypervisor_framework_unavailable",
+        "failed to initialize hvf": "hypervisor_framework_unavailable",
+        "whpx is not installed": "acceleration_missing",
+        "kvm is not installed": "acceleration_missing",
+        "/dev/kvm": "kvm_unavailable",
+    }
+    for marker, failure in markers.items():
+        if marker in lower:
+            return failure
+    return None
+
+
 def text_tail(path: pathlib.Path, limit: int = 6000) -> str | None:
     try:
         if not path.is_file():
@@ -946,15 +961,46 @@ def verify(
         if not boot_completed or not serial:
             if log is not None:
                 log.flush()
+            log_tail = text_tail(log_path)
+            venue_failure = emulator_venue_failure(log_tail)
+            diagnostics: dict[str, Any] = {
+                "emulator_log_tail": log_tail,
+                "emulator_exit_code": proc.poll() if proc is not None else None,
+                "serial": serial,
+                "acceleration": accel_text[-2000:],
+            }
+            if serial:
+                for prop in ("sys.boot_completed", "dev.bootcomplete", "init.svc.bootanim"):
+                    probe = run(
+                        [str(adb), "-s", serial, "shell", "getprop", prop],
+                        env=env,
+                        timeout=15,
+                        check=False,
+                    )
+                    diagnostics[prop] = probe.stdout.strip() if probe.returncode == 0 else None
+            if venue_failure:
+                plan["status"] = "venue_limitation"
+                plan["verification"] = {
+                    "status": "venue_limitation",
+                    "failure_type": venue_failure,
+                    "verified_at": utcnow(),
+                    **diagnostics,
+                }
+                atomic_json(plan_path, plan)
+                receipt = base_receipt("verify", key, profile, state_root)
+                receipt.update(
+                    status="venue_limitation",
+                    result_class="VENUE_LIMITATION",
+                    failure_type=venue_failure,
+                    next_action="use a venue exposing the profile's required native virtualization",
+                )
+                receipt["evidence"] = {"plan": str(plan_path), "toolchain_identity": identity, **diagnostics}
+                write_receipt(state_root, receipt)
+                return receipt, EXIT_VENUE
             raise AarHostError(
                 "accelerated AVD did not complete boot",
                 failure_type="avd_boot_failed",
-                evidence={
-                    "emulator_log_tail": text_tail(log_path),
-                    "emulator_exit_code": proc.poll() if proc is not None else None,
-                    "serial": serial,
-                    "acceleration": accel_text[-2000:],
-                },
+                evidence=diagnostics,
             )
 
         play = run(
