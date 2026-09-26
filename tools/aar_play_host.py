@@ -1040,6 +1040,40 @@ def verify(
     return receipt, 0
 
 
+def stop_runtime_processes_windows(runtime: pathlib.Path) -> dict[str, Any]:
+    """Terminate only processes executing binaries from this managed runtime."""
+    if platform.system().casefold() != "windows":
+        return {"attempted": False, "matched": [], "terminated": []}
+    shell = shutil.which("powershell.exe") or shutil.which("pwsh.exe")
+    if not shell:
+        return {"attempted": True, "matched": [], "terminated": [], "error": "powershell_unavailable"}
+    escaped = str(runtime.resolve()).replace("'", "''")
+    command = (
+        "$root='" + escaped + "';"
+        "$p=Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($root,[System.StringComparison]::OrdinalIgnoreCase) };"
+        "$out=@(); foreach($x in $p){"
+        " try { Stop-Process -Id $x.ProcessId -Force -ErrorAction Stop; $out += [pscustomobject]@{Pid=$x.ProcessId;Path=$x.ExecutablePath;Stopped=$true} }"
+        " catch { $out += [pscustomobject]@{Pid=$x.ProcessId;Path=$x.ExecutablePath;Stopped=$false;Error=$_.Exception.Message} }"
+        "}; if($null -eq $out){'[]'} else {$out|ConvertTo-Json -Compress}"
+    )
+    cp = run([shell, "-NoProfile", "-NonInteractive", "-Command", command], check=False, timeout=60)
+    try:
+        value = json.loads(cp.stdout.strip() or "[]")
+    except json.JSONDecodeError:
+        value = []
+    if isinstance(value, dict):
+        value = [value]
+    matched = value if isinstance(value, list) else []
+    terminated = [item for item in matched if item.get("Stopped")]
+    return {
+        "attempted": True,
+        "exit_code": cp.returncode,
+        "matched": matched,
+        "terminated": terminated,
+        "stderr_tail": cp.stderr.strip()[-500:] or None,
+    }
+
+
 def cleanup(plan_path: pathlib.Path, state_root: pathlib.Path) -> dict[str, Any]:
     plan, _lock, key, profile, runtime = validate_plan(plan_path, state_root)
     if plan.get("status") not in {"applied", "verified", "venue_limitation"}:
@@ -1054,15 +1088,25 @@ def cleanup(plan_path: pathlib.Path, state_root: pathlib.Path) -> dict[str, Any]
         raise AarHostError(
             "cleanup root failed fixed project-local check", failure_type="unsafe_cleanup"
         )
+    process_cleanup = None
+    if runtime.exists() and profile["os"] == "windows":
+        process_cleanup = stop_runtime_processes_windows(runtime)
+        # Give Windows a bounded interval to release executable/image handles.
+        time.sleep(2)
     if runtime.exists():
-        for attempt in range(4):
+        last_error: OSError | None = None
+        for attempt in range(10):
             try:
                 shutil.rmtree(runtime)
+                last_error = None
                 break
-            except OSError:
-                if attempt == 3:
-                    raise
-                time.sleep(2)
+            except OSError as exc:
+                last_error = exc
+                if profile["os"] == "windows":
+                    process_cleanup = stop_runtime_processes_windows(runtime)
+                time.sleep(min(1 + attempt, 5))
+        if last_error is not None and runtime.exists():
+            raise last_error
 
     plan["cleanup"] = {
         "status": "removed",
@@ -1076,6 +1120,7 @@ def cleanup(plan_path: pathlib.Path, state_root: pathlib.Path) -> dict[str, Any]
     receipt["evidence"] = {
         "plan": str(plan_path),
         "runtime_removed": not runtime.exists(),
+        "windows_runtime_process_cleanup": process_cleanup,
     }
     write_receipt(state_root, receipt)
     return receipt
