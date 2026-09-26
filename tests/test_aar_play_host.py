@@ -52,6 +52,14 @@ class PlayHostTests(unittest.TestCase):
         self.assertFalse(HOST.emulator_accel_ok("acceleration is not supported", 0))
         self.assertFalse(HOST.emulator_accel_ok("anything", 1))
 
+    def test_adb_device_parser_preserves_offline_to_device_state(self):
+        self.assertEqual(
+            HOST.parse_adb_devices(
+                "List of devices attached\nemulator-5554\toffline\nemulator-5556\tdevice product:sdk\n"
+            ),
+            {"emulator-5554": "offline", "emulator-5556": "device"},
+        )
+
     def test_emulator_venue_failure_classifies_hvf_unsupported(self):
         self.assertEqual(
             HOST.emulator_venue_failure("HVF error: HV_UNSUPPORTED\nfailed to initialize HVF"),
