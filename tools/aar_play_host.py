@@ -780,7 +780,11 @@ def stop_emulator_process(
 
 
 def verify(
-    plan_path: pathlib.Path, state_root: pathlib.Path, boot_timeout: int = 300
+    plan_path: pathlib.Path,
+    state_root: pathlib.Path,
+    boot_timeout: int = 300,
+    *,
+    emulator_sudo: bool = False,
 ) -> tuple[dict[str, Any], int]:
     plan, lock, key, profile, runtime = validate_plan(plan_path, state_root)
     if plan.get("status") not in {"applied", "verified"}:
@@ -823,6 +827,27 @@ def verify(
         write_receipt(state_root, receipt)
         return receipt, EXIT_VENUE
 
+    if emulator_sudo and profile["os"] != "linux":
+        raise AarHostError(
+            "--emulator-sudo is only valid for the Linux KVM permission adapter",
+            failure_type="invalid_venue_adapter",
+        )
+    if emulator_sudo:
+        sudo_probe = run(["sudo", "-n", "true"], check=False, timeout=20)
+        if sudo_probe.returncode != 0:
+            raise AarHostError(
+                "passwordless sudo is unavailable for the Linux KVM venue adapter",
+                failure_type="venue_adapter_unavailable",
+                exit_code=EXIT_VENUE,
+            )
+
+    # Keep the ADB server under the ordinary caller identity.  The Linux hosted
+    # runner adapter may elevate only the emulator process for /dev/kvm access;
+    # starting ADB first prevents root/user ADB-key races.
+    adb_start = run([str(adb), "start-server"], env=env, timeout=30, check=False)
+    if adb_start.returncode != 0:
+        raise AarHostError("failed to start caller-owned ADB server", failure_type="adb_start_failed")
+
     avd_name = plan["avd_name"]
     log_path = runtime / "emulator.log"
     command = [
@@ -851,8 +876,9 @@ def verify(
             popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
         else:
             popen_kwargs["start_new_session"] = True
+        launch_command = (["sudo", "-n", "-E"] + command) if emulator_sudo else command
         proc = subprocess.Popen(
-            command,
+            launch_command,
             env=env,
             stdout=log,
             stderr=subprocess.STDOUT,
@@ -928,6 +954,7 @@ def verify(
             "play_store_present": True,
             "authenticated": False,
             "acceleration": accel_text[-2000:],
+            "emulator_sudo_adapter": emulator_sudo,
         }
     finally:
         if log is not None:
@@ -1031,6 +1058,11 @@ def parser() -> argparse.ArgumentParser:
         child.add_argument("--plan", type=pathlib.Path, required=True)
         if name == "verify":
             child.add_argument("--boot-timeout", type=int, default=300)
+            child.add_argument(
+                "--emulator-sudo",
+                action="store_true",
+                help="Linux hosted-runner adapter: elevate only emulator/KVM while ADB remains caller-owned",
+            )
     return p
 
 
@@ -1051,7 +1083,12 @@ def main() -> int:
             emit(receipt, args.format)
             return 0
         if args.command == "verify":
-            receipt, code = verify(args.plan.resolve(), state_root, args.boot_timeout)
+            receipt, code = verify(
+                args.plan.resolve(),
+                state_root,
+                args.boot_timeout,
+                emulator_sudo=args.emulator_sudo,
+            )
             emit(receipt, args.format)
             return code
         if args.command == "cleanup":
