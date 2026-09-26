@@ -769,6 +769,19 @@ def emulator_venue_failure(log_text: str | None) -> str | None:
     return None
 
 
+def parse_adb_devices(output: str) -> dict[str, str]:
+    devices: dict[str, str] = {}
+    for line in output.splitlines():
+        parts = line.strip().split()
+        if len(parts) >= 2 and parts[0].startswith("emulator-"):
+            devices[parts[0]] = parts[1]
+    return devices
+
+
+def emulator_reported_boot_complete(log_path: pathlib.Path) -> bool:
+    return "Boot completed in " in (text_tail(log_path, 20000) or "")
+
+
 def text_tail(path: pathlib.Path, limit: int = 6000) -> str | None:
     try:
         if not path.is_file():
@@ -965,13 +978,17 @@ def verify(
             **popen_kwargs,
         )
         deadline = time.monotonic() + boot_timeout
+        adb_states: list[dict[str, str]] = []
         while time.monotonic() < deadline:
-            devices = run([str(adb), "devices"], env=env, timeout=15, check=False).stdout
-            for line in devices.splitlines():
-                if line.startswith("emulator-") and "\tdevice" in line:
-                    serial = line.split("\t", 1)[0]
-                    break
-            if serial:
+            device_map = parse_adb_devices(
+                run([str(adb), "devices"], env=env, timeout=15, check=False).stdout
+            )
+            if device_map:
+                serial = serial or next(iter(device_map))
+                snapshot = {"serial": serial, "state": device_map.get(serial, "unknown")}
+                if not adb_states or adb_states[-1] != snapshot:
+                    adb_states.append(snapshot)
+            if serial and device_map.get(serial) == "device":
                 boot = run(
                     [str(adb), "-s", serial, "shell", "getprop", "sys.boot_completed"],
                     env=env,
@@ -985,6 +1002,49 @@ def verify(
                 break
             time.sleep(3)
 
+        adb_post_boot_settle: dict[str, Any] | None = None
+        if (
+            not boot_completed
+            and profile["os"] == "macos"
+            and profile["arch"] == "x86_64"
+            and proc.poll() is None
+        ):
+            if log is not None:
+                log.flush()
+            if emulator_reported_boot_complete(log_path):
+                settle_started = time.monotonic()
+                settle_states: list[dict[str, str]] = []
+                run([str(adb), "kill-server"], env=env, timeout=20, check=False)
+                run([str(adb), "start-server"], env=env, timeout=30, check=False)
+                settle_deadline = time.monotonic() + 180
+                while time.monotonic() < settle_deadline and proc.poll() is None:
+                    device_map = parse_adb_devices(
+                        run([str(adb), "devices"], env=env, timeout=15, check=False).stdout
+                    )
+                    if device_map:
+                        serial = serial or next(iter(device_map))
+                        snapshot = {"serial": serial, "state": device_map.get(serial, "unknown")}
+                        if not settle_states or settle_states[-1] != snapshot:
+                            settle_states.append(snapshot)
+                    if serial and device_map.get(serial) == "device":
+                        boot = run(
+                            [str(adb), "-s", serial, "shell", "getprop", "sys.boot_completed"],
+                            env=env,
+                            timeout=15,
+                            check=False,
+                        )
+                        if boot.returncode == 0 and boot.stdout.strip() == "1":
+                            boot_completed = True
+                            break
+                    time.sleep(3)
+                adb_post_boot_settle = {
+                    "attempted": True,
+                    "emulator_boot_marker": True,
+                    "elapsed_seconds": round(time.monotonic() - settle_started, 3),
+                    "states": settle_states,
+                    "ready": boot_completed,
+                }
+
         if not boot_completed or not serial:
             if log is not None:
                 log.flush()
@@ -995,6 +1055,9 @@ def verify(
                 "emulator_exit_code": proc.poll() if proc is not None else None,
                 "serial": serial,
                 "acceleration": accel_text[-2000:],
+                "adb_states": adb_states,
+                "adb_post_boot_settle": adb_post_boot_settle,
+                "emulator_boot_marker": emulator_reported_boot_complete(log_path),
             }
             if serial:
                 for prop in ("sys.boot_completed", "dev.bootcomplete", "init.svc.bootanim"):
@@ -1066,6 +1129,8 @@ def verify(
             "authenticated": False,
             "acceleration": accel_text[-2000:],
             "emulator_sudo_adapter": emulator_sudo,
+            "adb_states": adb_states,
+            "adb_post_boot_settle": adb_post_boot_settle,
         }
     finally:
         if log is not None:
