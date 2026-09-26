@@ -285,33 +285,54 @@ def plan_file(state_root: pathlib.Path, plan_id: str) -> pathlib.Path:
 
 
 def create_plan(state_root: pathlib.Path, accept_sdk_licenses: bool) -> dict[str, Any]:
-    if not accept_sdk_licenses:
+    lock = load_lock()
+    key, profile = host_profile(lock)
+    runtime = state_root / "runtime" / key
+    plan_id = "play-host-" + key + "-" + dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    avd_name = "aar-play-api35-" + profile["image_abi"].replace("-", "_")
+
+    existing_identity: dict[str, Any] | None = None
+    if runtime.exists():
+        try:
+            existing_identity = critical_identity(runtime, lock, key, profile)
+        except AarHostError as exc:
+            raise AarHostError(
+                "existing project-local runtime is present but does not match the pinned toolchain; "
+                "inspect evidence and cleanup before replacement",
+                failure_type="existing_state_drift",
+                evidence={"runtime_root": str(runtime), "drift_failure_type": exc.failure_type},
+            ) from exc
+        config_path = runtime / "avd" / f"{avd_name}.avd" / "config.ini"
+        if not config_path.is_file():
+            raise AarHostError(
+                "existing project-local runtime is missing the expected AVD configuration; "
+                "inspect evidence and cleanup before replacement",
+                failure_type="existing_state_drift",
+                evidence={"runtime_root": str(runtime), "missing": str(config_path)},
+            )
+    elif not accept_sdk_licenses:
         raise AarHostError(
             "SDK license acceptance is an explicit apply boundary; rerun plan with --accept-sdk-licenses",
             failure_type="license_acceptance_required",
         )
-    lock = load_lock()
-    key, profile = host_profile(lock)
-    runtime = state_root / "runtime" / key
-    if runtime.exists():
-        raise AarHostError(
-            f"runtime already exists: {runtime}; inspect or cleanup before a new plan",
-            failure_type="existing_state",
-        )
-    plan_id = "play-host-" + key + "-" + dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+
+    no_op = existing_identity is not None
     value = {
         "schema": PLAN_SCHEMA,
         "plan_id": plan_id,
         "created_at": utcnow(),
-        "status": "planned",
+        "status": "applied" if no_op else "planned",
+        "plan_mode": "verify-existing" if no_op else "install",
         "profile_key": key,
         "profile": profile,
         "runtime_root": str(runtime),
         "lock_path": str(LOCK_PATH.relative_to(ROOT)),
         "lock_sha256": sha256_file(LOCK_PATH),
         "implementation_sha256": sha256_file(pathlib.Path(__file__)),
-        "accept_sdk_licenses": True,
-        "mutations": [
+        "accept_sdk_licenses": bool(accept_sdk_licenses),
+        "avd_name": avd_name if no_op else None,
+        "toolchain_identity": existing_identity,
+        "mutations": [] if no_op else [
             "create project-local runtime root",
             "download checksum-pinned Temurin JDK, Android command-line tools, and Emulator",
             "accept Android SDK licenses inside the project-local SDK",
@@ -328,11 +349,17 @@ def create_plan(state_root: pathlib.Path, accept_sdk_licenses: bool) -> dict[str
     path = plan_file(state_root, plan_id)
     atomic_json(path, value)
     receipt = base_receipt("plan", key, profile, state_root)
-    receipt.update(status="planned", result_class="PASS", next_action=f"apply --plan {path}")
+    receipt.update(
+        status="no-op-planned" if no_op else "planned",
+        result_class="PASS",
+        next_action=f"apply --plan {path}",
+    )
     receipt["evidence"] = {
         "plan": str(path),
         "plan_sha256": sha256_file(path),
+        "plan_mode": value["plan_mode"],
         "mutations": value["mutations"],
+        "toolchain_identity": existing_identity,
     }
     write_receipt(state_root, receipt)
     return receipt
