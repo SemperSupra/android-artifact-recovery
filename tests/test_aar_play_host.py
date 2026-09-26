@@ -67,5 +67,31 @@ class PlayHostTests(unittest.TestCase):
             self.assertEqual(ctx.exception.failure_type, "license_acceptance_required")
 
 
+    def test_interface_contract_is_discoverable_for_all_audiences(self):
+        contract = HOST.interface_contract()
+        self.assertEqual(
+            set(contract["audiences"]),
+            {"human", "automation", "agent"},
+        )
+        self.assertEqual(
+            contract["lifecycle"],
+            ["observe", "plan", "apply", "verify", "cleanup"],
+        )
+        self.assertEqual(contract["audiences"]["agent"]["discover"], "contract --format json")
+
+    def test_linux_sudo_emulator_prefix_is_narrow_and_explicit(self):
+        env = {
+            "HOME": "/home/runner",
+            "PATH": "/tools",
+            "ANDROID_AVD_HOME": "/tmp/avd",
+            "JAVA_HOME": "/tmp/jdk",
+        }
+        prefix = HOST.emulator_command_prefix(env, True)
+        self.assertEqual(prefix[:3], ["sudo", "-n", "env"])
+        self.assertIn("HOME=/home/runner", prefix)
+        self.assertIn("ANDROID_AVD_HOME=/tmp/avd", prefix)
+        self.assertNotIn("-E", prefix)
+
+
 if __name__ == "__main__":
     unittest.main()
