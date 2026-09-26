@@ -274,7 +274,7 @@ def observe(state_root: pathlib.Path) -> dict[str, Any]:
     receipt.update(
         status="observed",
         result_class="PASS",
-        next_action="plan --accept-sdk-licenses" if not runtime_root.exists() else "inspect existing runtime or cleanup",
+        next_action="plan --accept-sdk-licenses" if not runtime_root.exists() else "plan",
     )
     write_receipt(state_root, receipt)
     return receipt
@@ -288,7 +288,7 @@ def create_plan(state_root: pathlib.Path, accept_sdk_licenses: bool) -> dict[str
     lock = load_lock()
     key, profile = host_profile(lock)
     runtime = state_root / "runtime" / key
-    plan_id = "play-host-" + key + "-" + dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    plan_id = "play-host-" + key + "-" + dt.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     avd_name = "aar-play-api35-" + profile["image_abi"].replace("-", "_")
 
     existing_identity: dict[str, Any] | None = None
@@ -1218,12 +1218,12 @@ def interface_contract() -> dict[str, Any]:
                     str(EXIT_VENUE): "venue_limitation",
                     str(EXIT_FAILURE): "failure",
                 },
-                "idempotency": "second apply validates exact toolchain identity and returns no-op",
+                "idempotency": "fresh plan recognizes a healthy existing runtime; apply validates exact toolchain identity and returns no-op",
             },
             "agent": {
                 "discover": "contract --format json",
                 "observe": "observe --format json",
-                "plan": "plan --accept-sdk-licenses --format json",
+                "plan": "plan --format json for an existing runtime; add --accept-sdk-licenses only when installation is required",
                 "mutations": ["apply", "cleanup"],
                 "verification": "verify",
                 "authority_rule": "visibility/tool access never implies authority; apply requires an exact plan",
