@@ -2,6 +2,7 @@ import importlib.util
 import pathlib
 import tempfile
 import unittest
+from unittest import mock
 import zipfile
 
 
@@ -65,6 +66,15 @@ class PlayHostTests(unittest.TestCase):
             with self.assertRaises(HOST.AarHostError) as ctx:
                 HOST.create_plan(pathlib.Path(td), False)
             self.assertEqual(ctx.exception.failure_type, "license_acceptance_required")
+
+
+    def test_optional_memory_sensor_fails_open_on_probe_timeout(self):
+        with mock.patch.object(
+            HOST,
+            "run",
+            side_effect=HOST.AarHostError("command timeout: powershell.exe", failure_type="timeout"),
+        ):
+            self.assertIsNone(HOST.memory_bytes("windows"))
 
 
     def test_interface_contract_is_discoverable_for_all_audiences(self):
