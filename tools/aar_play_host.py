@@ -344,8 +344,10 @@ def safe_extract_tar(archive: pathlib.Path, destination: pathlib.Path) -> None:
     with tarfile.open(archive, "r:*") as tf:
         for member in tf.getmembers():
             rel = pathlib.PurePosixPath(member.name)
-            if rel.is_absolute() or ".." in rel.parts or member.issym() or member.islnk():
+            if rel.is_absolute() or ".." in rel.parts:
                 raise AarHostError(f"unsafe tar entry: {member.name}", failure_type="archive_invalid")
+        # Python's data filter permits safe in-tree links while rejecting
+        # absolute/out-of-tree link targets and special-device extraction.
         tf.extractall(destination, filter="data")
 
 
