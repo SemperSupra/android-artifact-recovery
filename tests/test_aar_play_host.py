@@ -103,5 +103,18 @@ class PlayHostTests(unittest.TestCase):
         self.assertNotIn("-E", prefix)
 
 
+    def test_linux_runtime_ownership_restore_is_narrow(self):
+        result = mock.Mock(returncode=0, stdout="", stderr="")
+        with mock.patch.object(HOST.os, "getuid", return_value=1001), mock.patch.object(
+            HOST.os, "getgid", return_value=1002
+        ), mock.patch.object(HOST, "run", return_value=result) as runner:
+            observed = HOST.restore_runtime_ownership(pathlib.Path("/tmp/aar-runtime"))
+        self.assertTrue(observed["passed"])
+        argv = runner.call_args.args[0]
+        self.assertEqual(argv[:4], ["sudo", "-n", "chown", "-R"])
+        self.assertIn("1001:1002", argv)
+        self.assertNotIn("-E", argv)
+
+
 if __name__ == "__main__":
     unittest.main()
