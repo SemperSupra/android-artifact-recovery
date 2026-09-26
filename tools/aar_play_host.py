@@ -15,6 +15,7 @@ import os
 import pathlib
 import platform
 import shutil
+import signal
 import subprocess
 import sys
 import tarfile
@@ -34,10 +35,18 @@ EXIT_FAILURE = 4
 
 
 class AarHostError(RuntimeError):
-    def __init__(self, message: str, *, failure_type: str = "failure", exit_code: int = EXIT_FAILURE):
+    def __init__(
+        self,
+        message: str,
+        *,
+        failure_type: str = "failure",
+        exit_code: int = EXIT_FAILURE,
+        evidence: dict[str, Any] | None = None,
+    ):
         super().__init__(message)
         self.failure_type = failure_type
         self.exit_code = exit_code
+        self.evidence = evidence or {}
 
 
 def utcnow() -> str:
@@ -718,6 +727,58 @@ def emulator_accel_ok(output: str, returncode: int) -> bool:
     return not any(marker in lower for marker in negative)
 
 
+def text_tail(path: pathlib.Path, limit: int = 6000) -> str | None:
+    try:
+        if not path.is_file():
+            return None
+        value = path.read_text(encoding="utf-8", errors="replace")
+        return value[-limit:]
+    except OSError:
+        return None
+
+
+def stop_emulator_process(
+    proc: subprocess.Popen[Any] | None,
+    *,
+    serial: str | None,
+    adb: pathlib.Path,
+    env: dict[str, str],
+    os_name: str,
+) -> None:
+    if serial:
+        run([str(adb), "-s", serial, "emu", "kill"], env=env, timeout=20, check=False)
+    if proc is None:
+        return
+    try:
+        proc.wait(timeout=15)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    if os_name == "windows":
+        run(["taskkill.exe", "/PID", str(proc.pid), "/T", "/F"], timeout=30, check=False)
+    else:
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            proc.terminate()
+    try:
+        proc.wait(timeout=15)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    if os_name != "windows":
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            proc.kill()
+    else:
+        proc.kill()
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        pass
+
+
 def verify(
     plan_path: pathlib.Path, state_root: pathlib.Path, boot_timeout: int = 300
 ) -> tuple[dict[str, Any], int]:
@@ -785,7 +846,18 @@ def verify(
     boot_completed = False
     try:
         log = log_path.open("w", encoding="utf-8")
-        proc = subprocess.Popen(command, env=env, stdout=log, stderr=subprocess.STDOUT)
+        popen_kwargs: dict[str, Any] = {}
+        if profile["os"] == "windows":
+            popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        else:
+            popen_kwargs["start_new_session"] = True
+        proc = subprocess.Popen(
+            command,
+            env=env,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            **popen_kwargs,
+        )
         deadline = time.monotonic() + boot_timeout
         while time.monotonic() < deadline:
             devices = run([str(adb), "devices"], env=env, timeout=15, check=False).stdout
@@ -808,8 +880,17 @@ def verify(
             time.sleep(3)
 
         if not boot_completed or not serial:
+            if log is not None:
+                log.flush()
             raise AarHostError(
-                "accelerated AVD did not complete boot", failure_type="avd_boot_failed"
+                "accelerated AVD did not complete boot",
+                failure_type="avd_boot_failed",
+                evidence={
+                    "emulator_log_tail": text_tail(log_path),
+                    "emulator_exit_code": proc.poll() if proc is not None else None,
+                    "serial": serial,
+                    "acceleration": accel_text[-2000:],
+                },
             )
 
         play = run(
@@ -849,22 +930,15 @@ def verify(
             "acceleration": accel_text[-2000:],
         }
     finally:
-        if serial:
-            run(
-                [str(adb), "-s", serial, "emu", "kill"],
-                env=env,
-                timeout=20,
-                check=False,
-            )
-        if proc is not None:
-            try:
-                proc.wait(timeout=30)
-            except subprocess.TimeoutExpired:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
+        if log is not None:
+            log.flush()
+        stop_emulator_process(
+            proc,
+            serial=serial,
+            adb=adb,
+            env=env,
+            os_name=profile["os"],
+        )
         if log is not None:
             log.close()
         run([str(adb), "kill-server"], env=env, timeout=20, check=False)
@@ -1001,6 +1075,8 @@ def main() -> int:
             next_action="inspect receipt and durable evidence before retry",
         )
         receipt["evidence"]["error"] = str(exc)
+        if isinstance(exc, AarHostError) and exc.evidence:
+            receipt["evidence"].update(exc.evidence)
         write_receipt(state_root, receipt)
         emit(receipt, args.format)
         return exit_code
