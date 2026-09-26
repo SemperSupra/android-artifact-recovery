@@ -1,0 +1,110 @@
+{
+  "android": {
+    "api_level": "35",
+    "cmdline_tools": {
+      "archives": {
+        "linux-x86_64": {
+          "sha256": "7ec965280a073311c339e571cd5de778b9975026cfcbe79f2b1cdcb1e15317ee",
+          "url": "https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip"
+        },
+        "macos-arm64": {
+          "sha256": "5673201e6f3869f418eeed3b5cb6c4be7401502bd0aae1b12a29d164d647a54e",
+          "url": "https://dl.google.com/android/repository/commandlinetools-mac-13114758_latest.zip"
+        },
+        "macos-x86_64": {
+          "sha256": "5673201e6f3869f418eeed3b5cb6c4be7401502bd0aae1b12a29d164d647a54e",
+          "url": "https://dl.google.com/android/repository/commandlinetools-mac-13114758_latest.zip"
+        },
+        "windows-x86_64": {
+          "sha256": "98b565cb657b012dae6794cefc0f66ae1efb4690c699b78a614b4a6a3505b003",
+          "url": "https://dl.google.com/android/repository/commandlinetools-win-13114758_latest.zip"
+        }
+      },
+      "version": "19.0"
+    },
+    "device": "pixel_7",
+    "emulator": {
+      "archives": {
+        "linux-x86_64": {
+          "sha256": "95771e0ae431897b2a4bd2d97fa095f29a8b0624a7b216baf529f9306161c266",
+          "url": "https://dl.google.com/android/repository/emulator-linux_x64-15917651.zip"
+        },
+        "macos-arm64": {
+          "sha256": "22530de9363f34ea945ecb5cad74523abd4b615f27f3c1a9899efb183ea9e144",
+          "url": "https://dl.google.com/android/repository/emulator-darwin_aarch64-15917651.zip"
+        },
+        "macos-x86_64": {
+          "sha256": "c1a3890f95b8868198918fad05ffca16fa20404d93547ba545ff5a5867ee7005",
+          "url": "https://dl.google.com/android/repository/emulator-darwin_x64-15917651.zip"
+        },
+        "windows-x86_64": {
+          "sha256": "5ff441f3b12ace9b13e9cf96fb0007d233967718652a8110705e995ac47bfeb7",
+          "url": "https://dl.google.com/android/repository/emulator-windows_x64-15917651.zip"
+        }
+      },
+      "build_id": "15917651",
+      "version": "37.1.11"
+    },
+    "packages": {
+      "build-tools;35.0.0": "35.0.0",
+      "platform-tools": "37.0.1",
+      "system_image_revision": "9"
+    }
+  },
+  "java": {
+    "archives": {
+      "linux-x86_64": {
+        "sha256": "3808d1d15e3ec6bd5b84057fb5d84c33d8a1536a258146bcea2e603fc726e08e",
+        "url": "https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.20.1%2B1/OpenJDK17U-jdk_x64_linux_hotspot_17.0.20.1_1.tar.gz"
+      },
+      "macos-arm64": {
+        "sha256": "196d13ba5f10414bef7f6a05a9b3f00edacb18ebacef2b99485db9e2ee18f0e8",
+        "url": "https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.20.1%2B1/OpenJDK17U-jdk_aarch64_mac_hotspot_17.0.20.1_1.tar.gz"
+      },
+      "macos-x86_64": {
+        "sha256": "c01975da12ed4235250ff891fe8bba73a9e73037d444b269c9d0922b5dbc8e0a",
+        "url": "https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.20.1%2B1/OpenJDK17U-jdk_x64_mac_hotspot_17.0.20.1_1.tar.gz"
+      },
+      "windows-x86_64": {
+        "sha256": "e53a79c3c3d86865bd7e787903884331068e71321714ffd44f145785affc7cb0",
+        "url": "https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.20.1%2B1/OpenJDK17U-jdk_x64_windows_hotspot_17.0.20.1_1.zip"
+      }
+    },
+    "version": "17.0.20.1+1"
+  },
+  "profiles": {
+    "linux-x86_64": {
+      "acceleration": "KVM",
+      "arch": "x86_64",
+      "image_abi": "x86_64",
+      "os": "linux",
+      "system_image": "system-images;android-35;google_apis_playstore;x86_64"
+    },
+    "macos-arm64": {
+      "acceleration": "Hypervisor.Framework",
+      "arch": "arm64",
+      "image_abi": "arm64-v8a",
+      "os": "macos",
+      "system_image": "system-images;android-35;google_apis_playstore;arm64-v8a"
+    },
+    "macos-x86_64": {
+      "acceleration": "Hypervisor.Framework",
+      "arch": "x86_64",
+      "image_abi": "x86_64",
+      "os": "macos",
+      "system_image": "system-images;android-35;google_apis_playstore;x86_64"
+    },
+    "windows-x86_64": {
+      "acceleration": "WHPX",
+      "arch": "x86_64",
+      "image_abi": "x86_64",
+      "os": "windows",
+      "system_image": "system-images;android-35;google_apis_playstore;x86_64"
+    }
+  },
+  "schema": "aar-play-host-lock/v1",
+  "unsupported": {
+    "linux-arm64": "Android Emulator does not currently support Linux on ARM CPUs.",
+    "windows-arm64": "Android Emulator does not currently support Windows on ARM CPUs."
+  }
+}
