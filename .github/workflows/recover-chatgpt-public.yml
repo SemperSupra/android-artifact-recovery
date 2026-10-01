@@ -14,12 +14,13 @@ jobs:
   acquire-and-characterize:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 30
     env:
       PACKAGE_ID: com.openai.chatgpt
       EXPECTED_SIGNER_SHA256: b24f4bfbb3cf293f938703b9d87027c1102cc36dc4fa206910e08927db40473c
       APKEEP_VERSION: 1.0.0
       APKEEP_SHA256: a23579a3ba366d25a6d69848189b983d65662f4ecf4b9e11e16510811659de4e
+      JUSTAPK_COMMIT: fa29784143085163893fac7056f080d961dc505b
     steps:
       - uses: actions/checkout@v4
 
@@ -34,61 +35,117 @@ jobs:
           chmod +x "$RUNNER_TEMP/apkeep"
           "$RUNNER_TEMP/apkeep" --version
 
-      - name: Observe APKPure versions and acquire latest available arm64 archive
+      - name: Observe APKPure lineage and acquire latest available arm64 archive
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/acq" out/chatgpt
+          mkdir -p "$RUNNER_TEMP/acq-apkpure" out/chatgpt
           "$RUNNER_TEMP/apkeep" -l -a "$PACKAGE_ID" -d apk-pure \
             -o 'arch=arm64-v8a,output_format=json' | tee out/chatgpt/apkpure-versions.json
           "$RUNNER_TEMP/apkeep" -a "$PACKAGE_ID" -d apk-pure \
-            -o 'arch=arm64-v8a' "$RUNNER_TEMP/acq"
-          artifact="$(find "$RUNNER_TEMP/acq" -maxdepth 1 -type f \( -name '*.apk' -o -name '*.xapk' \) -print -quit)"
+            -o 'arch=arm64-v8a' "$RUNNER_TEMP/acq-apkpure"
+          artifact="$(find "$RUNNER_TEMP/acq-apkpure" -maxdepth 1 -type f \( -name '*.apk' -o -name '*.xapk' \) -print -quit)"
           test -n "$artifact"
-          echo "ARTIFACT=$artifact" >> "$GITHUB_ENV"
-          sha256sum "$artifact" | tee out/chatgpt/archive-sha256.txt
-          printf '{"source":"APKPure via apkeep","package_id":"%s","artifact_name":"%s","artifact_size_bytes":%s}\n' \
-            "$PACKAGE_ID" "$(basename "$artifact")" "$(stat -c %s "$artifact")" > out/chatgpt/acquisition-source.json
+          echo "APKPURE_ARTIFACT=$artifact" >> "$GITHUB_ENV"
+          sha256sum "$artifact" | tee out/chatgpt/apkpure-archive-sha256.txt
+          printf '{"source":"APKPure via pinned EFF apkeep","package_id":"%s","artifact_name":"%s","artifact_size_bytes":%s}\n' \
+            "$PACKAGE_ID" "$(basename "$artifact")" "$(stat -c %s "$artifact")" > out/chatgpt/apkpure-acquisition-source.json
 
-      - name: Characterize container and code-bearing entries
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 tools/characterize_android_artifact.py "$ARTIFACT" \
-            --out out/chatgpt/artifact-characterization.json
-
-      - name: Verify package and official signing identity
+      - name: Verify source and fail over to independent Uptodown acquisition when needed
         shell: bash
         run: |
           set -euo pipefail
           apksigner="$(find "${ANDROID_HOME:-/usr/local/lib/android/sdk}/build-tools" -type f -name apksigner | sort -V | tail -n1)"
           aapt="$(find "${ANDROID_HOME:-/usr/local/lib/android/sdk}/build-tools" -type f -name aapt | sort -V | tail -n1)"
           test -x "$apksigner" && test -x "$aapt"
-          mkdir -p "$RUNNER_TEMP/unpacked"
-          case "$ARTIFACT" in
-            *.xapk) unzip -q "$ARTIFACT" -d "$RUNNER_TEMP/unpacked" ;;
-            *.apk) cp "$ARTIFACT" "$RUNNER_TEMP/unpacked/base.apk" ;;
-            *) exit 2 ;;
-          esac
-          : > out/chatgpt/signers.txt
-          while IFS= read -r apk; do
-            report="$($apksigner verify --print-certs "$apk")"
-            digest="$(printf '%s\n' "$report" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n1 | tr '[:upper:]' '[:lower:]' | tr -d ':')"
-            test "$digest" = "$EXPECTED_SIGNER_SHA256"
-            printf '%s %s\n' "$(basename "$apk")" "$digest" >> out/chatgpt/signers.txt
-          done < <(find "$RUNNER_TEMP/unpacked" -type f -name '*.apk' | sort)
-          base="$(find "$RUNNER_TEMP/unpacked" -type f -name 'com.openai.chatgpt.apk' -print -quit)"
-          if [ -z "$base" ]; then
-            base="$(find "$RUNNER_TEMP/unpacked" -type f -name 'base.apk' -print -quit)"
+
+          verify_candidate() {
+            local artifact="$1"
+            local source_id="$2"
+            local unpacked="$RUNNER_TEMP/unpacked-$source_id"
+            local signer_file="out/chatgpt/signers-$source_id.txt"
+            local package_file="out/chatgpt/package-$source_id.txt"
+            rm -rf "$unpacked"
+            mkdir -p "$unpacked"
+            case "$artifact" in
+              *.xapk|*.zip) unzip -q "$artifact" -d "$unpacked" ;;
+              *.apk) cp "$artifact" "$unpacked/base.apk" ;;
+              *) printf 'unsupported artifact: %s\n' "$artifact" >&2; return 2 ;;
+            esac
+
+            : > "$signer_file"
+            local mismatch=0
+            local count=0
+            while IFS= read -r apk; do
+              count=$((count + 1))
+              set +e
+              report="$("$apksigner" verify --print-certs "$apk" 2>&1)"
+              verify_rc=$?
+              set -e
+              digest="$(printf '%s\n' "$report" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n1 | tr '[:upper:]' '[:lower:]' | tr -d ':')"
+              if [ "$verify_rc" -ne 0 ] || [ -z "$digest" ] || [ "$digest" != "$EXPECTED_SIGNER_SHA256" ]; then
+                mismatch=1
+              fi
+              printf '%s\tverify_rc=%s\tsha256=%s\texpected=%s\n' \
+                "$(basename "$apk")" "$verify_rc" "${digest:-MISSING}" "$EXPECTED_SIGNER_SHA256" >> "$signer_file"
+            done < <(find "$unpacked" -type f -name '*.apk' | sort)
+            test "$count" -gt 0
+
+            base="$(find "$unpacked" -type f -name 'com.openai.chatgpt.apk' -print -quit)"
+            if [ -z "$base" ]; then base="$(find "$unpacked" -type f -name 'base.apk' -print -quit)"; fi
+            if [ -z "$base" ]; then base="$(find "$unpacked" -type f -name '*.apk' -print -quit)"; fi
+            test -n "$base"
+            badging="$("$aapt" dump badging "$base" | head -n 1)"
+            printf '%s\n' "$badging" | tee "$package_file"
+            if ! printf '%s\n' "$badging" | grep -q "name='$PACKAGE_ID'"; then
+              mismatch=1
+            fi
+
+            if [ "$mismatch" -eq 0 ]; then
+              printf '%s\n' "$artifact" > "$RUNNER_TEMP/selected-artifact"
+              printf '%s\n' "$base" > "$RUNNER_TEMP/selected-base"
+              printf '%s\n' "$source_id" > "$RUNNER_TEMP/selected-source"
+              return 0
+            fi
+            return 1
+          }
+
+          if verify_candidate "$APKPURE_ARTIFACT" apkpure; then
+            echo "APKPure candidate matched the official signing identity."
+          else
+            echo "APKPure candidate did not pass the signing/package gate; trying Uptodown independently."
+            python3 -m pip install --disable-pip-version-check \
+              "git+https://github.com/TheQmaks/justapk.git@${JUSTAPK_COMMIT}"
+            mkdir -p "$RUNNER_TEMP/acq-uptodown"
+            justapk download "$PACKAGE_ID" -s uptodown --no-convert -o "$RUNNER_TEMP/acq-uptodown" \
+              | tee out/chatgpt/uptodown-download.json
+            uptodown="$(find "$RUNNER_TEMP/acq-uptodown" -type f \( -name '*.apk' -o -name '*.xapk' \) -print -quit)"
+            test -n "$uptodown"
+            sha256sum "$uptodown" | tee out/chatgpt/uptodown-archive-sha256.txt
+            if ! verify_candidate "$uptodown" uptodown; then
+              echo "Neither independently acquired candidate passed the official signing/package gate." >&2
+              exit 1
+            fi
+            echo "Uptodown candidate matched the official signing identity."
           fi
-          if [ -z "$base" ]; then
-            base="$(find "$RUNNER_TEMP/unpacked" -type f -name '*.apk' -print -quit)"
-          fi
-          test -n "$base"
-          badging="$($aapt dump badging "$base" | head -n 1)"
-          printf '%s\n' "$badging" | tee out/chatgpt/base-badging.txt
-          printf '%s\n' "$badging" | grep -q "name='$PACKAGE_ID'"
+
+          artifact="$(cat "$RUNNER_TEMP/selected-artifact")"
+          base="$(cat "$RUNNER_TEMP/selected-base")"
+          source_id="$(cat "$RUNNER_TEMP/selected-source")"
+          echo "ARTIFACT=$artifact" >> "$GITHUB_ENV"
           echo "BASE_APK=$base" >> "$GITHUB_ENV"
+          echo "SELECTED_SOURCE=$source_id" >> "$GITHUB_ENV"
+          printf '{"selected_source":"%s","package_id":"%s","official_signer_sha256":"%s","artifact_name":"%s","artifact_size_bytes":%s}\n' \
+            "$source_id" "$PACKAGE_ID" "$EXPECTED_SIGNER_SHA256" "$(basename "$artifact")" "$(stat -c %s "$artifact")" \
+            > out/chatgpt/selected-source.json
+
+      - name: Characterize verified container and code-bearing entries
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/characterize_android_artifact.py "$ARTIFACT" \
+            --out out/chatgpt/artifact-characterization.json
+          sha256sum "$ARTIFACT" | tee out/chatgpt/selected-archive-sha256.txt
 
       - name: Install pinned JADX and derive bounded behavior surface
         shell: bash
@@ -117,11 +174,38 @@ jobs:
             --manifest "$RUNNER_TEMP/AndroidManifest.xml" \
             --out out/chatgpt/derived-surface.json
 
+      - name: Emit public-safe acquisition receipt
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, pathlib
+          root=pathlib.Path("out/chatgpt")
+          def load(name):
+              p=root/name
+              try: return json.loads(p.read_text())
+              except Exception: return None
+          char=load("artifact-characterization.json")
+          selected=load("selected-source.json")
+          receipt={
+            "schema":"aar-chatgpt-public-recovery-receipt/v1",
+            "package_id":"com.openai.chatgpt",
+            "selected_source": (selected or {}).get("selected_source"),
+            "official_signer_verified": bool(selected),
+            "artifact_characterization_summary": (char or {}).get("summary"),
+            "derived_surface_present": (root/"derived-surface.json").is_file(),
+            "proprietary_bytes_published": False,
+            "claim_boundary":"Public artifact contains only bounded derived metadata; no APK/XAPK or decompiled source is retained."
+          }
+          (root/"receipt.json").write_text(json.dumps(receipt,indent=2,sort_keys=True)+"\n")
+          PY
+
       - name: Redact transient proprietary material
         if: always()
         shell: bash
         run: |
-          rm -rf "$RUNNER_TEMP/acq" "$RUNNER_TEMP/unpacked" "$RUNNER_TEMP/jadx-out" "$RUNNER_TEMP/AndroidManifest.xml" || true
+          rm -rf "$RUNNER_TEMP/acq-apkpure" "$RUNNER_TEMP/acq-uptodown" "$RUNNER_TEMP/unpacked-apkpure" \
+            "$RUNNER_TEMP/unpacked-uptodown" "$RUNNER_TEMP/jadx-out" "$RUNNER_TEMP/AndroidManifest.xml" || true
 
       - name: Publish derived recovery receipt only
         if: always()
