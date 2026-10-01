@@ -30,6 +30,7 @@ def main() -> int:
     p=argparse.ArgumentParser()
     p.add_argument('--jadx-root', required=True)
     p.add_argument('--manifest', required=True)
+    p.add_argument('--permissions')
     p.add_argument('--out', required=True)
     p.add_argument('--max-files', type=int, default=60000)
     args=p.parse_args()
@@ -65,7 +66,8 @@ def main() -> int:
             if len(named_paths)<300 and len(path.stem)<160:
                 named_paths.append(rel)
     manifest=read_text(pathlib.Path(args.manifest))
-    perms=sorted(set(re.findall(r'android\\.permission\\.[A-Z0-9_]+', manifest)))
+    permissions_text=read_text(pathlib.Path(args.permissions)) if args.permissions else ''
+    perms=sorted(set(re.findall(r'android\.permission\.[A-Z0-9_]+', manifest + '\n' + permissions_text)))
     component_tags=collections.Counter(re.findall(r'<(activity|service|receiver|provider)\\b', manifest))
     exported=[]
     for block in re.findall(r'<(?:activity|service|receiver|provider)\\b[^>]*>', manifest):
