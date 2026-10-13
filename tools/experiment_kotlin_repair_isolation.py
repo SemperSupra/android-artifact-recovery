@@ -73,7 +73,10 @@ def main() -> int:
 
     raw = out / "raw"
     raw.mkdir()
-    decomp = invoke([a.jadx, "-d", str(raw), a.apk], timeout=180)
+    # Match the qualified AAR static-recovery producer exactly: output form is an
+    # experimental input, not an interchangeable JADX implementation detail.
+    jadx_args = ["--no-res", "--no-imports", "--show-bad-code"]
+    decomp = invoke([a.jadx, *jadx_args, "-d", str(raw), a.apk], timeout=180)
     original_package = raw / "sources" / PACKAGE
     original_java = original_package / "GoldenRecordFingerprint.java"
     if not original_java.is_file():
@@ -85,6 +88,7 @@ def main() -> int:
     for method in ("raw", "dedupe-only", "existing-bounded-repair"):
         root = raw if method == "raw" else out / method
         change = {"kind": "NONE", "source_sha256": checksum(original_java)}
+        intervention_error = None
         if method != "raw":
             shutil.copytree(original_package, root / "sources" / PACKAGE)
             dest = root / "sources" / PACKAGE / original_java.name
@@ -95,16 +99,25 @@ def main() -> int:
                 else:
                     patched, repaired = repair(raw_text)
                     rules = [{"id": q.rule_id, "count": q.count} for q in repaired]
+                dest.write_text(patched, encoding="utf-8")
+                change = {"kind": method, "state": "APPLIED",
+                          "input_sha256": checksum(original_java),
+                          "output_sha256": checksum(dest), "rules": rules}
             except ValueError as exc:
-                raise SystemExit("bounded intervention failed closed: " + str(exc))
-            dest.write_text(patched, encoding="utf-8")
-            change = {"kind": method, "input_sha256": checksum(original_java),
-                      "output_sha256": checksum(dest), "rules": rules}
+                intervention_error = str(exc)
+                change = {"kind": method, "state": "UNSUPPORTED_PATTERN",
+                          "input_sha256": checksum(original_java),
+                          "error": intervention_error, "rules": []}
         java_sources = sorted((root / "sources" / PACKAGE).rglob("*.java"))
         classes = root / "classes"
         classes.mkdir()
-        compiled = invoke(["javac", "-encoding", "UTF-8", "-cp", candcp, "-d",
-                           str(classes), *map(str, java_sources)])
+        compiled = (
+            {"exit_code": None, "elapsed_ms": 0, "stdout": "",
+             "stderr": "INTERVENTION_UNSUPPORTED: " + intervention_error}
+            if intervention_error else
+            invoke(["javac", "-encoding", "UTF-8", "-cp", candcp, "-d",
+                    str(classes), *map(str, java_sources)])
+        )
         execute = {"exit_code": None, "stderr": "NOT_RUN", "stdout": ""}
         harness_compiled = {"exit_code": None, "stderr": "NOT_RUN"}
         if compiled["exit_code"] == 0:
@@ -148,7 +161,7 @@ def main() -> int:
     doc = {"schema": "aar-kotlin-repair-isolation/v0",
            "artifact_sha256": apk_hash,
            "original_source_known_vectors": expected,
-           "original_harness": original, "jadx": decomp,
+           "original_harness": original, "jadx": decomp, "jadx_flags": jadx_args,
            "methods": experiments, "comparisons": comparisons,
            "interpretation": "Diagnostic intervention, not generalized Kotlin repair. "
                              "Source/oracle values are source-known public goldens; "
