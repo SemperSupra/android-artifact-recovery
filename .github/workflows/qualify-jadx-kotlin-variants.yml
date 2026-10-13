@@ -1,0 +1,118 @@
+name: RDTE JADX Kotlin recovery variants
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/qualify-jadx-kotlin-variants.yml'
+      - 'goldens/kotlin-dex/**'
+      - 'tools/qualify_method_comparison.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  kotlin-recovery-interview:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Build AAR source-known Kotlin golden
+        working-directory: goldens/kotlin-dex
+        run: gradle --no-daemon assembleRelease
+      - name: Install exact JADX release
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 --max-time 120 \
+            https://github.com/skylot/jadx/releases/download/v1.5.6/jadx-1.5.6.zip \
+            -o "$RUNNER_TEMP/jadx.zip"
+          echo '545ea2be9c242511bc145755cf4bda2485ade42966e096f8b4d3da2a230e8974  '"$RUNNER_TEMP/jadx.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/jadx.zip" -d "$RUNNER_TEMP/jadx"
+          echo "JADX=$RUNNER_TEMP/jadx/bin/jadx" >> "$GITHUB_ENV"
+      - name: Interview independent JADX raw variant outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/kotlin-variants
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, subprocess, sys, time
+
+          root = pathlib.Path(".").resolve()
+          out = root / "out/kotlin-variants"
+          apk = next((root / "goldens/kotlin-dex/app/build/outputs/apk/release").glob("*.apk"))
+          klass = next((root / "goldens/kotlin-dex/app/build").rglob("GoldenRecordFingerprint.class"))
+          class_root = klass.parents[5]
+          stdlib = next(pathlib.Path.home().joinpath(".gradle/caches/modules-2/files-2.1/org.jetbrains.kotlin/kotlin-stdlib").rglob("kotlin-stdlib-2.0.21.jar"))
+          ann_paths = list(pathlib.Path.home().joinpath(".gradle/caches/modules-2/files-2.1/org.jetbrains/annotations").rglob("*.jar"))
+          cp = os.pathsep.join(map(str, [class_root, stdlib, *ann_paths[:1]]))
+          harness = root / "tests/fixtures/GoldenFingerprintHarness.java"
+          oracle_build = out / "original-harness"
+          oracle_build.mkdir()
+          def command(argv, limit=120):
+              start = time.monotonic()
+              proc = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=limit, check=False)
+              return {"rc":proc.returncode, "stdout":proc.stdout.decode("utf-8","replace")[-2500:],
+                      "stderr":proc.stderr.decode("utf-8","replace")[-2500:],
+                      "elapsed_ms":round((time.monotonic()-start)*1000,3)}
+          compiled=command(["javac","-cp",cp,"-d",str(oracle_build),str(harness)])
+          if compiled["rc"] != 0: raise SystemExit("original harness compile failed "+compiled["stderr"])
+          original=command(["java","-cp",os.pathsep.join([str(oracle_build),cp]),"GoldenFingerprintHarness"])
+          if original["rc"] != 0: raise SystemExit("original oracle failed "+original["stderr"])
+          expected=original["stdout"].strip()
+          variants = {
+              "default": [],
+              "no-inline-methods": ["--no-inline-methods"],
+              "no-replace-consts": ["--no-replace-consts"],
+              "simple": ["--decompilation-mode","simple"],
+              "restructure": ["--decompilation-mode","restructure"],
+          }
+          report={"schema":"aar-kotlin-jadx-variants/v0","apk_sha256":hashlib.sha256(apk.read_bytes()).hexdigest(),
+                  "oracle":expected,"jadx_archive_sha256":"545ea2be9c242511bc145755cf4bda2485ade42966e096f8b4d3da2a230e8974",
+                  "variants":{},"interpretation":"Candidate screening only; no source-equivalence or production promotion."}
+          for name, flags in variants.items():
+              folder=out/name
+              folder.mkdir()
+              decomp=command([os.environ["JADX"],*flags,"-d",str(folder/"jadx"),str(apk)],limit=180)
+              package=folder/"jadx/sources/org/sempersupra/aar/golden/kotlin"
+              sources=sorted(package.rglob("*.java")) if package.exists() else []
+              result={"decompilation":decomp,"recovered_files":len(sources),
+                      "semantic_state":"UNKNOWN","compilation":None,"behavior":None}
+              if decomp["rc"] == 0 and sources:
+                  compiled_dir=folder/"classes"
+                  compiled_dir.mkdir()
+                  candidate_cp=os.pathsep.join(map(str,[stdlib,*ann_paths[:1]]))
+                  comp=command(["javac","-cp",candidate_cp,"-d",str(compiled_dir),*map(str,sources)])
+                  result["compilation"]=comp
+                  if comp["rc"] == 0:
+                      harness_classes=folder/"harness"
+                      harness_classes.mkdir()
+                      cp2=os.pathsep.join([str(compiled_dir),candidate_cp])
+                      hc=command(["javac","-cp",cp2,"-d",str(harness_classes),str(harness)])
+                      result["harness_compile"]=hc
+                      if hc["rc"] == 0:
+                          res=command(["java","-cp",os.pathsep.join([str(harness_classes),cp2]),"GoldenFingerprintHarness"])
+                          result["behavior"]=res
+                          if res["rc"] == 0:
+                              result["semantic_state"]="MATCH" if res["stdout"].strip()==expected else "MISMATCH"
+              report["variants"][name]=result
+              print(json.dumps({"variant":name,"state":result["semantic_state"],
+                                "decomp_rc":decomp["rc"],"compile_rc":result["compilation"]["rc"] if result["compilation"] else None}))
+          (out/"variants.json").write_text(json.dumps(report,indent=2,sort_keys=True)+"\n")
+          if report["variants"]["default"]["semantic_state"] == "MATCH":
+              print("Baseline surprisingly MATCH; do not assume historical failure reproduced")
+          PY
+      - name: Publish public synthetic evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: aar-public-kotlin-jadx-variants
+          path: out/kotlin-variants/variants.json
+          if-no-files-found: warn
+          retention-days: 7
