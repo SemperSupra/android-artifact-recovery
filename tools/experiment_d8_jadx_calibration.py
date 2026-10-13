@@ -158,6 +158,11 @@ def main() -> int:
             "restructure": comparison["candidate"]["per_question"]["behavior"],
             "signal": comparison["signal"],
             "qualified_improvement": comparison["qualified_improvement"],
+            "median_ms": {
+                "auto": comparison["baseline"]["elapsed_ms_reported"],
+                "restructure": comparison["candidate"]["elapsed_ms_reported"],
+            },
+            "crossover_order": list(order),
         }, sort_keys=True))
     (out / "calibration.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     return 0
