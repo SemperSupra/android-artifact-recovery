@@ -20,7 +20,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: '8.11.1'
       - name: Build AAR source-known Kotlin golden
@@ -84,7 +84,7 @@ jobs:
               sources=sorted(package.rglob("*.java")) if package.exists() else []
               result={"decompilation":decomp,"recovered_files":len(sources),
                       "semantic_state":"UNKNOWN","compilation":None,"behavior":None}
-              if decomp["rc"] == 0 and sources:
+              if sources:
                   compiled_dir=folder/"classes"
                   compiled_dir.mkdir()
                   candidate_cp=os.pathsep.join(map(str,[stdlib,*ann_paths[:1]]))
@@ -103,9 +103,9 @@ jobs:
                               result["semantic_state"]="MATCH" if res["stdout"].strip()==expected else "MISMATCH"
               report["variants"][name]=result
               print(json.dumps({"variant":name,"state":result["semantic_state"],
-                                "decomp_rc":decomp["rc"],"compile_rc":result["compilation"]["rc"] if result["compilation"] else None}))
+                                "decomp_rc":decomp["rc"],"recovered_files":len(sources), "diagnostic":decomp["stderr"][:280], "compile_rc":result["compilation"]["rc"] if result["compilation"] else None}))
           (out/"variants.json").write_text(json.dumps(report,indent=2,sort_keys=True)+"\n")
-          if report["variants"]["default"]["semantic_state"] == "MATCH":
+          if not any(v["recovered_files"] for v in report["variants"].values()):\n              raise SystemExit("Invalid experiment: no JADX variant emitted source; see recorded decompiler errors")\n          if report["variants"]["default"]["semantic_state"] == "MATCH":
               print("Baseline surprisingly MATCH; do not assume historical failure reproduced")
           PY
       - name: Publish public synthetic evidence
