@@ -105,7 +105,9 @@ jobs:
               print(json.dumps({"variant":name,"state":result["semantic_state"],
                                 "decomp_rc":decomp["rc"],"recovered_files":len(sources), "diagnostic":decomp["stderr"][:280], "compile_rc":result["compilation"]["rc"] if result["compilation"] else None}))
           (out/"variants.json").write_text(json.dumps(report,indent=2,sort_keys=True)+"\n")
-          if not any(v["recovered_files"] for v in report["variants"].values()):\n              raise SystemExit("Invalid experiment: no JADX variant emitted source; see recorded decompiler errors")\n          if report["variants"]["default"]["semantic_state"] == "MATCH":
+          if not any(v["recovered_files"] for v in report["variants"].values()):
+              raise SystemExit("Invalid experiment: no JADX variant emitted source; see recorded decompiler errors")
+          if report["variants"]["default"]["semantic_state"] == "MATCH":
               print("Baseline surprisingly MATCH; do not assume historical failure reproduced")
           PY
       - name: Publish public synthetic evidence
