@@ -1,0 +1,87 @@
+name: Interview Kotlin JADX raw recovery variants
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/qualify-kotlin-jadx-variants.yml'
+      - 'tools/experiment_kotlin_jadx_variants.py'
+      - 'tools/qualify_method_comparison.py'
+      - 'goldens/kotlin-dex/**'
+      - 'tests/fixtures/GoldenFingerprintHarness.java'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  public-source-known-kotlin:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 16
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Build unchanged source-known Kotlin golden
+        working-directory: goldens/kotlin-dex
+        run: gradle --no-daemon assembleRelease
+      - name: Pin source-known artifact and original oracle classpath
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="$(find goldens/kotlin-dex/app/build/outputs/apk/release -type f -name '*.apk' -print -quit)"
+          test -f "$apk"
+          class_file="$(find goldens/kotlin-dex/app/build -type f -path '*/org/sempersupra/aar/golden/kotlin/GoldenRecordFingerprint.class' -print -quit)"
+          test -n "$class_file"
+          class_root="$(python3 - "$class_file" <<'PY'
+          import pathlib,sys
+          print(pathlib.Path(sys.argv[1]).resolve().parents[5])
+          PY
+          )"
+          stdlib="$(find "$HOME/.gradle/caches/modules-2/files-2.1/org.jetbrains.kotlin/kotlin-stdlib" -type f -name 'kotlin-stdlib-2.0.21.jar' -print -quit)"
+          annotations="$(find "$HOME/.gradle/caches/modules-2/files-2.1/org.jetbrains/annotations" -type f -name '*.jar' ! -name '*sources*' -print -quit || true)"
+          test -d "$class_root"
+          test -f "$stdlib"
+          printf 'APK=%s\nORIGINAL_CLASSES=%s\nKOTLIN_STDLIB=%s\nJETBRAINS_ANNOTATIONS=%s\n' "$apk" "$class_root" "$stdlib" "$annotations" >> "$GITHUB_ENV"
+          sha256sum "$apk" "$stdlib"
+      - name: Install and verify exact baseline JADX binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --max-time 150 \
+            https://github.com/skylot/jadx/releases/download/v1.5.6/jadx-1.5.6.zip \
+            -o "$RUNNER_TEMP/jadx.zip"
+          echo '545ea2be9c242511bc145755cf4bda2485ade42966e096f8b4d3da2a230e8974  '"$RUNNER_TEMP/jadx.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/jadx.zip" -d "$RUNNER_TEMP/jadx"
+          echo "JADX=$RUNNER_TEMP/jadx/bin/jadx" >> "$GITHUB_ENV"
+      - name: Interview raw recovered Kotlin under six bounded JADX variants
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/experiment_kotlin_jadx_variants.py \
+            --apk "$APK" \
+            --original-classes "$ORIGINAL_CLASSES" \
+            --kotlin-stdlib "$KOTLIN_STDLIB" \
+            --annotations "$JETBRAINS_ANNOTATIONS" \
+            --harness tests/fixtures/GoldenFingerprintHarness.java \
+            --jadx "$JADX" \
+            --out out/kotlin-variants
+          python3 - <<'PY'
+          import json
+          d=json.load(open('out/kotlin-variants/interview.json'))
+          assert d['schema']=='aar-kotlin-jadx-variant-interview/v0'
+          assert len(d['cases']) == 6 and len(d['compared_to_auto']) == 5
+          assert all(not x['qualified_improvement'] for x in d['compared_to_auto'].values())
+          print('RAW_KOTLIN_JADX_INTERVIEW=PASS; METHOD_SUPERIORITY=UNKNOWN')
+          PY
+      - name: Preserve synthetic experiment evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: aar-public-kotlin-jadx-variant-interview
+          path: out/kotlin-variants/interview.json
+          if-no-files-found: warn
+          retention-days: 7
