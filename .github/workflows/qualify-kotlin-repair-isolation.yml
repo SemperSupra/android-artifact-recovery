@@ -1,0 +1,89 @@
+name: Isolate Kotlin recovery failure classes
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/qualify-kotlin-repair-isolation.yml'
+      - 'tools/experiment_kotlin_repair_isolation.py'
+      - 'tools/repair_jadx_kotlin_java.py'
+      - 'tools/qualify_method_comparison.py'
+      - 'tests/fixtures/GoldenFingerprintMatrixHarness.java'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  independent-source-known-matrix:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 16
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '8.11.1'
+      - name: Build pinned source-known AAR Kotlin golden
+        working-directory: goldens/kotlin-dex
+        run: gradle --no-daemon assembleRelease
+      - name: Resolve and pin original/derived dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="$(find goldens/kotlin-dex/app/build/outputs/apk/release -name '*.apk' -print -quit)"
+          klass="$(find goldens/kotlin-dex/app/build -name GoldenRecordFingerprint.class -print -quit)"
+          test -f "$apk" && test -f "$klass"
+          root="$(python3 - "$klass" <<'PY'
+          import pathlib, sys
+          print(pathlib.Path(sys.argv[1]).resolve().parents[5])
+          PY
+          )"
+          stdlib="$(find "$HOME/.gradle/caches/modules-2/files-2.1/org.jetbrains.kotlin/kotlin-stdlib" -name kotlin-stdlib-2.0.21.jar -print -quit)"
+          annotations="$(find "$HOME/.gradle/caches/modules-2/files-2.1/org.jetbrains/annotations" -name '*.jar' ! -name '*sources*' -print -quit || true)"
+          test -f "$stdlib" && test -d "$root"
+          printf 'APK=%s\nORIGINAL_CLASSES=%s\nKOTLIN_STDLIB=%s\nANNOTATIONS=%s\n' "$apk" "$root" "$stdlib" "$annotations" >> "$GITHUB_ENV"
+          sha256sum "$apk" "$stdlib"
+      - name: Install byte-verified JADX v1.5.6
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 --max-time 150 \
+            https://github.com/skylot/jadx/releases/download/v1.5.6/jadx-1.5.6.zip \
+            -o "$RUNNER_TEMP/jadx.zip"
+          echo '545ea2be9c242511bc145755cf4bda2485ade42966e096f8b4d3da2a230e8974  '"$RUNNER_TEMP/jadx.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/jadx.zip" -d "$RUNNER_TEMP/jadx"
+          echo "JADX=$RUNNER_TEMP/jadx/bin/jadx" >> "$GITHUB_ENV"
+      - name: Compare raw, getter-only, and existing repair without oracle contamination
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/experiment_kotlin_repair_isolation.py \
+            --apk "$APK" --original-classes "$ORIGINAL_CLASSES" \
+            --kotlin-stdlib "$KOTLIN_STDLIB" --annotations "$ANNOTATIONS" \
+            --matrix-harness tests/fixtures/GoldenFingerprintMatrixHarness.java \
+            --jadx "$JADX" --out out/kotlin-isolation
+          python3 - <<'PY'
+          import json
+          d=json.load(open('out/kotlin-isolation/repair-isolation.json'))
+          assert len(d['original_source_known_vectors'])==10
+          assert len(d['comparisons'])==2
+          assert not any(v['qualified_improvement'] for v in d['comparisons'].values())
+          full=d['methods']['existing-bounded-repair']
+          assert full['intervention']['state']=='APPLIED'
+          assert full['compile']['exit_code']==0, full['compile']['stderr']
+          assert full['harness_compile']['exit_code']==0, full['harness_compile']['stderr']
+          assert full['execution']['exit_code']==0, full['execution']['stderr']
+          assert full['observed_vectors']==10 and full['matched_vectors']==10, full
+          assert d['methods']['dedupe-only']['compile']['exit_code'] != 0
+          print('ISOLATION_EVIDENCE=PASS; GENERALIZED_RECOVERY=UNKNOWN')
+          PY
+      - name: Retain bounded public experiment evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: aar-public-kotlin-repair-isolation
+          path: out/kotlin-isolation/repair-isolation.json
+          retention-days: 7
+          if-no-files-found: warn

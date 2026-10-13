@@ -1,0 +1,29 @@
+name: Qualify source-informed methodology evidence
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/qualify-source-informed-methodology.yml'
+      - 'tools/qualify_method_comparison.py'
+      - 'tests/test_qualify_method_comparison.py'
+      - 'docs/recovery/source-informed-methodology-rdte-2026-10-13.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  public-synthetic-qualification:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v7
+      - name: Verify synthetic evidence comparator and existing foundation
+        run: |
+          python3 -m unittest -v \
+            tests/test_qualify_method_comparison.py \
+            tests/test_characterize_android_artifact.py \
+            tests/test_component_correspondence.py
+      - name: Scope attestation
+        run: |
+          echo "Public-safe source-known fixtures and stdlib tests only."
+          echo "No private APK, secrets, authenticated state, or proprietary data."
