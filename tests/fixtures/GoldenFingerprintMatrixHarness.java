@@ -4,7 +4,7 @@ import org.sempersupra.aar.golden.kotlin.GoldenRecordFingerprint;
 
 /** Independent public source-known behavior vectors (not JADX-derived). */
 public final class GoldenFingerprintMatrixHarness {
-    public static void main(String[] args) {
+    public static void main(String[] args) throws Exception {
         String[] vectors = new String[] {
             "",
             " # only a comment\n\n",

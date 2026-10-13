@@ -70,6 +70,13 @@ jobs:
           assert len(d['original_source_known_vectors'])==10
           assert len(d['comparisons'])==2
           assert not any(v['qualified_improvement'] for v in d['comparisons'].values())
+          full=d['methods']['existing-bounded-repair']
+          assert full['intervention']['state']=='APPLIED'
+          assert full['compile']['exit_code']==0, full['compile']['stderr']
+          assert full['harness_compile']['exit_code']==0, full['harness_compile']['stderr']
+          assert full['execution']['exit_code']==0, full['execution']['stderr']
+          assert full['observed_vectors']==10 and full['matched_vectors']==10, full
+          assert d['methods']['dedupe-only']['compile']['exit_code'] != 0
           print('ISOLATION_EVIDENCE=PASS; GENERALIZED_RECOVERY=UNKNOWN')
           PY
       - name: Retain bounded public experiment evidence
