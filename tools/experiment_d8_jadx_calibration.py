@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import json
 import pathlib
+import statistics
 import subprocess
 import time
 
@@ -89,10 +90,12 @@ def main() -> int:
             "schema": "aar-method-oracle/v0", "artifact_sha256": dex_sha,
             "questions": {"behavior": {"expected": expected, "consequential": True}},
         }
-        methods = []
-        details = {}
-        for jadx_mode in ("auto", "restructure"):
-            target = var / jadx_mode
+        # Alternating ABBA trials guard against a fixed first-run penalty.
+        # These short trials are calibration, not qualified cost evidence.
+        order = ("auto", "restructure", "restructure", "auto")
+        repetitions = {"auto": [], "restructure": []}
+        for trial, jadx_mode in enumerate(order):
+            target = var / (jadx_mode + "-trial-" + str(trial))
             target.mkdir()
             decompiled = execute([args.jadx, "--decompilation-mode", jadx_mode,
                                   "-d", str(target), str(dex)], timeout=180)
@@ -109,19 +112,36 @@ def main() -> int:
                     candidate = execute([args.java, "-cp", str(recompiled), CLASS_NAME])
                     if candidate["exit_code"] == 0:
                         observation = {"state": "OBSERVED", "value": candidate["stdout"].strip()}
+            repetitions[jadx_mode].append({
+                "trial": trial, "decompilation": decompiled,
+                "recovered_sources": len(source_files),
+                "compile": compile_record,
+                "run": candidate, "observation": observation,
+            })
+        methods = []
+        details = {}
+        for jadx_mode in ("auto", "restructure"):
+            trials = repetitions[jadx_mode]
+            values = [t["observation"] for t in trials]
+            consistent = len(values) == 2 and all(
+                v["state"] == "OBSERVED" and v["value"] == values[0].get("value")
+                for v in values
+            )
+            observed = values[0] if consistent else {"state": "UNKNOWN"}
+            elapsed = round(statistics.median(
+                t["decompilation"]["elapsed_ms"] for t in trials), 3)
             methods.append({
                 "schema": "aar-method-observations/v0",
                 "artifact_sha256": dex_sha,
                 "method_id": "jadx-" + jadx_mode,
-                "elapsed_ms": decompiled["elapsed_ms"],
-                "observations": {"behavior": observation},
+                "elapsed_ms": elapsed,
+                "observations": {"behavior": observed},
             })
             details[jadx_mode] = {
-                "decompilation": decompiled,
-                "recovered_sources": len(source_files),
-                "compile": compile_record,
-                "run": candidate,
-                "semantic_state": observation["state"],
+                "trials": trials,
+                "consistent_observations": consistent,
+                "semantic_state": observed["state"],
+                "median_elapsed_ms_reported": elapsed,
             }
         comparison = compare(oracle, *methods)
         report["variants"][compiler_mode] = {
