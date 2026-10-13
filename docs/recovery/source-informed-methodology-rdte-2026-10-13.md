@@ -25,7 +25,7 @@ are for subsequent source reading, not version/release compatibility claims:
 | Ghidra | https://github.com/NationalSecurityAgency/ghidra | `73a102ba2730bf20d0b8cbdc131ef12928e2690a` | Apache-2.0; source-known FID/BSim/native comparisons; AAR has separate pinned Ghidra 12.1.4 |
 | Kotlin | https://github.com/JetBrains/kotlin | `bdab7487af122deb00588be7c6582425eb33e344` | Source available; investigate IR/lowering; license verification required per relevant subtree |
 | smali/dexlib2 | https://github.com/JesusFreke/smali | `2771eae0a11f07bd892732232e6ee4e32437230d` | Historical source; archived; qualify maintenance and license before admission |
-| D8/R8 | https://r8.googlesource.com/r8 | **PIN_PENDING** | Google authoritative source; requires a separately verified Gitiles commit |
+| D8/R8 | https://r8.googlesource.com/r8 | `b0d966bc2d7270f4e2e81634fc98eee9ecb65cad` | Official Gitiles main commit observed 2026-10-13 (Oct 9 commit date); detailed compiler-pass audit still pending |
 | Android ART | https://android.googlesource.com/platform/art | **PIN_PENDING** | Runtime and DEX semantics; not all proprietary vendor components are present |
 | Android LLVM toolchain | https://android.googlesource.com/toolchain/llvm_android | **PIN_PENDING** | Native reference-build transformations; compiler/flag differences require measurement |
 
@@ -121,3 +121,11 @@ behavioral validation cannot be proven.
 Success: measured increase in validated consequential behavior or lower
 independently measured cost for **the same validated behaviors** without
 new false attributions, repeatable on disjoint holdout workloads.
+
+## First live public synthetic calibration
+
+- Public Actions run [#38404154793](https://github.com/SemperSupra/android-artifact-recovery/actions/runs/38404154793) PASS with exact downloaded JADX v1.5.6 archive SHA-256 `545ea2be9c242511bc145755cf4bda2485ade42966e096f8b4d3da2a230e8974` and preinstalled Android D8.
+- Source-known public Java BranchAndFold fixture processed as D8 debug and release, separate exact DEX artifact SHA per mode; raw JADX `auto` and `restructure` recompilation and behavioral oracle both MATCH for both DEX variants.
+- A preliminary `CANDIDATE_COST_SIGNAL` is confounded because modes executed in fixed order; it is **not** a cost finding or improvement. A later ABBA crossover rerun deliberately tests this risk.
+- D8 debug/release changes debug information/DEX output; it is not an R8 optimization/inlining/shrinking qualification. Follow-on E1 must separately instrument R8 source-level optimization on synthetics.
+- Gitiles evidence: https://r8.googlesource.com/r8/+/b0d966bc2d7270f4e2e81634fc98eee9ecb65cad . This source head and GitHub tool heads do **not** imply identical versions to AAR's current packaged toolchain.
