@@ -37,7 +37,9 @@ RUN set -eux; \
     printf '#!/bin/sh\nexec java -jar /opt/apktool-3.0.3.jar "$@"\n' > /usr/local/bin/apktool; \
     chmod 0755 /usr/local/bin/apktool; \
     /opt/jadx/bin/jadx --version; /usr/local/bin/apktool --version
-ENV PATH="/opt/jadx/bin:${PATH}" JADX=/opt/jadx/bin/jadx APKTOOL=/usr/local/bin/apktool
+ENV PATH="/opt/jadx/bin:${PATH}" JADX=/opt/jadx/bin/jadx APKTOOL=/usr/local/bin/apktool \
+    JAVA_TOOL_OPTIONS="-Duser.home=/tmp" XDG_CONFIG_HOME=/tmp/.config \
+    XDG_DATA_HOME=/tmp/.local/share
 USER 65532:65532
 CMD ["python", "tools/aar_image_parity.py", "probe", "--profile", "java-static"]
 
