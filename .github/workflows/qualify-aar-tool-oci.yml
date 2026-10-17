@@ -86,6 +86,41 @@ jobs:
         run: |
           python3 tools/aar_container_launch.py probe --image aar-python-core:ci --allow-local-test-tag
           python3 tools/aar_container_launch.py probe --image aar-python-core:ci --allow-local-test-tag --dry-run
+      - name: Execute host launcher against one-file synthetic fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixture="$RUNNER_TEMP/aar-mount-input"
+          mkdir -p "$fixture"
+          export AAR_FIXTURE="$fixture"
+          python3 - <<'PY'
+          import os,pathlib,zipfile
+          directory=pathlib.Path(os.environ["AAR_FIXTURE"])
+          with zipfile.ZipFile(directory/"synthetic.apk","w",compression=zipfile.ZIP_DEFLATED) as z:
+              z.writestr("classes.dex",b"dex\n035\x00"+b"golden"*10)
+              z.writestr("assets/opaque.bin",b"\x00asm\x01\x00\x00\x00")
+          (directory/"private-neighbor.txt").write_text("must not be visible inside tool capsule")
+          PY
+          evidence="$RUNNER_TEMP/aar-one-file-evidence"
+          python3 tools/aar_container_launch.py plan --allow-local-test-tag \
+            --image aar-python-core:ci --platform "linux/${{ matrix.arch }}" \
+            --artifact "$fixture/synthetic.apk" --work-root "$evidence"
+          test ! -e "$evidence"
+          python3 tools/aar_container_launch.py run --allow-local-test-tag \
+            --image aar-python-core:ci --platform "linux/${{ matrix.arch }}" \
+            --artifact "$fixture/synthetic.apk" --work-root "$evidence"
+          python3 tools/aar_container_launch.py verify --allow-local-test-tag \
+            --image aar-python-core:ci --platform "linux/${{ matrix.arch }}" \
+            --artifact "$fixture/synthetic.apk" --work-root "$evidence"
+          python3 - "$fixture/synthetic.apk" "$evidence" <<'PY'
+          import hashlib,json,pathlib,sys
+          sample=pathlib.Path(sys.argv[1])
+          key=hashlib.sha256(sample.read_bytes()).hexdigest()
+          receipt=json.loads((pathlib.Path(sys.argv[2])/key/"receipt.json").read_text())
+          assert receipt["input"]["sha256"]==key
+          assert receipt["stage"]=="CHARACTERIZED_ONLY"
+          print("OCI_ONE_FILE_HOST_LAUNCH=PASS")
+          PY
       - name: Retain public-safe capability fingerprint
         if: always()
         uses: actions/upload-artifact@v4
