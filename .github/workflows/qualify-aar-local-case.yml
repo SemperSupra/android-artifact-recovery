@@ -90,7 +90,11 @@ jobs:
           assert static["dex_recovery"]["root_dex_count"] >= 1
           assert static["status"] in ("PASS", "PARTIAL")
           assert isinstance(evidence,dict)
-          print("SOURCE_KNOWN_TOOLCHAIN_SMOKE=PASS")
+          print("SOURCE_KNOWN_TOOLCHAIN_EXECUTION=PASS")
+          print("STATIC_REPRESENTATION_STATUS=" + static["status"])
+          for rep in static["representations"]:
+              result=rep.get("result", {})
+              print("REPRESENTATION",rep["producer"],"EXIT",result.get("returncode"),"STDERR",str(result.get("stderr",""))[:1200])
           PY
 
 # This branch's additional job intentionally uses only an authored public AAR golden.
