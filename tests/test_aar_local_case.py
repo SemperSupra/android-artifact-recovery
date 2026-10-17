@@ -45,6 +45,10 @@ class LocalCaseTests(unittest.TestCase):
                             capture_output=True, text=True, timeout=30)
         self.assertEqual(cp.returncode, 0, cp.stderr)
         self.assertIn("PRESENCE_ONLY_NOT_MODEL_OR_TOOL_PASS", cp.stdout)
+        names = json.loads(cp.stdout)["executables"]
+        for name in ("pi-bigmac", "aider-bigmac", "goose-bigmac",
+                     "vibe-bigmac", "opencode-bigmac", "qwen-bigmac"):
+            self.assertIn(name, names)
 
     def test_plan_is_read_only(self):
         cp = self.invoke("plan")
