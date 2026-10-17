@@ -46,15 +46,21 @@ def observe(profile: str, cfg: dict) -> dict:
     for key in required:
         spec = cfg["tools"][key]
         if "glob" in spec:
-            matches = sorted(glob.glob(spec["glob"]))
-            if len(matches) != 1:
-                raise ValueError(f"{key}: expected exactly one file; got {len(matches)}")
-            path = pathlib.Path(matches[0])
+            matches = sorted(glob.glob(spec["glob"], recursive=True))
+            if not matches or any(not pathlib.Path(x).is_file() for x in matches):
+                raise ValueError(f"{key}: missing or invalid tool library set")
+            members = [{"path": x, "sha256": sha(pathlib.Path(x))} for x in matches]
+            entry = {
+                "path": spec["glob"],
+                "files": members,
+                "sha256": hashlib.sha256(canonical({"files": members}).encode()).hexdigest(),
+            }
+            path = None
         else:
             path = pathlib.Path(spec["path"])
-        if not path.is_file():
-            raise ValueError(f"{key}: missing executable or artifact: {path}")
-        entry = {"sha256": sha(path), "path": str(path)}
+            if not path.is_file():
+                raise ValueError(f"{key}: missing executable or artifact: {path}")
+            entry = {"sha256": sha(path), "path": str(path)}
         if "sha256" in spec and entry["sha256"] != spec["sha256"]:
             raise ValueError(f"{key}: installed artifact digest differs from contract")
         if "argv" in spec:
