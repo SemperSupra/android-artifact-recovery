@@ -34,7 +34,7 @@ def stamped(profile="python-core", arch="x86_64", digest="a" * 64):
 
 class ImageParityContractTests(unittest.TestCase):
     def test_contract_supported_profiles_and_explicit_unknowns(self):
-        cfg = P.contract(ROOT / "containers/aar-tools/parity-contract.json")
+        cfg = P.contract(P.CONTRACT)
         self.assertEqual(cfg["platform"], "linux")
         self.assertNotIn("aapt2", cfg["profiles"]["java-static"]["requires"])
         self.assertIn("apktool", cfg["profiles"]["java-static"]["requires"])
