@@ -16,6 +16,8 @@ import subprocess
 import sys
 
 CONTRACT = pathlib.Path(__file__).resolve().parents[1] / "parity-contract.json"
+if not CONTRACT.is_file():
+    CONTRACT = pathlib.Path(__file__).resolve().parents[1] / "containers" / "aar-tools" / "parity-contract.json"
 SCHEMA = "aar-tool-image-observation/v0"
 
 
