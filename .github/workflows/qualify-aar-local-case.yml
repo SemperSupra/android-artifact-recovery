@@ -1,0 +1,30 @@
+name: Qualify AAR local case admission
+on:
+  pull_request:
+    paths:
+      - "tools/aar_local_case.py"
+      - "tools/characterize_android_artifact.py"
+      - "tests/test_aar_local_case.py"
+      - ".github/workflows/qualify-aar-local-case.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-admission:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Host and tool presence probe (not a model qualification)
+        run: python3 tools/aar_local_case.py probe
+      - name: Public synthetic fixture and adversarial regressions
+        run: python3 -m unittest -v tests.test_aar_local_case
+      - name: Existing AAR artifact characterizer regression
+        run: python3 -m unittest -v tests.test_characterize_android_artifact
+
+# Public authored synthetic fixtures only. No authenticated APKs, private artifacts,
+# private repo contents, credentials, vendor LLM calls, runner grants or production deployment.
