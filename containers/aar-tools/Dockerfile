@@ -1,7 +1,7 @@
 # Stateless AAR tool execution capsule; one Linux OCI contract for GHA and local.
 # Resolve BASE_IMAGE to a fully qualified registry digest in CI/local build.
 # No local AI model, credentials, APK corpus, Docker socket, or service endpoints are embedded.
-ARG BASE_IMAGE=python:3.12-slim-bookworm
+ARG BASE_IMAGE=docker.io/library/python@sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3a1509accc92a4e24a07258
 FROM ${BASE_IMAGE} AS python-core
 LABEL org.opencontainers.image.source="https://github.com/SemperSupra/android-artifact-recovery" \
       org.opencontainers.image.title="AAR stateless tools (Python core)" \
