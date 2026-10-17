@@ -49,8 +49,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker pull python:3.12-slim-bookworm
-          base="$(docker image inspect python:3.12-slim-bookworm --format '{{index .RepoDigests 0}}')"
+          base="$(python3 -c 'import json; print(json.load(open("containers/aar-tools/toolchain.lock.json"))["base_image"])')"
+          docker pull "$base"
           case "$base" in *@sha256:*) ;; *) exit 1;; esac
           echo "BASE_REF=$base" >> "$GITHUB_ENV"
           echo "RESOLVED_BASE_MANIFEST=$base"
@@ -96,8 +96,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker pull python:3.12-slim-bookworm
-          base="$(docker image inspect python:3.12-slim-bookworm --format '{{index .RepoDigests 0}}')"
+          base="$(python3 -c 'import json; print(json.load(open("containers/aar-tools/toolchain.lock.json"))["base_image"])')"
+          docker pull "$base"
           docker build -f containers/aar-tools/Dockerfile --target java-static \
             --build-arg "BASE_IMAGE=$base" --tag aar-java-static:ci .
           docker image inspect aar-java-static:ci --format 'IMAGE={{.Id}} ARCH={{.Architecture}} SIZE={{.Size}}'
