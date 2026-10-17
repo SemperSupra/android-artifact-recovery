@@ -57,3 +57,35 @@ The local SHA config ID addresses a particular built image on that local engine;
 3. Audit Java/JADX/Apktool licensing and downstream SDK redistribution, then reuse existing OCI foundry for immutable publication/admission if approved. Do not create automatic push on PR.
 4. Execute local Windows/WSL2, TrueNAS x64 and BigMac arm64 image/run/mount preflights; compare exact image identities and functionally matched fixtures. Record emulation/performance separately.
 5. Reuse Model Spelunker actor bindings, portable launch contracts and independent evaluators, preserving campaign-private artifact and model-gateway boundaries.
+
+
+## October 18: local host acceptance and one-file isolation
+
+The launcher's corpus boundary is now one read-only input **file**, not its parent directory. This matters when unrelated proprietary files or credentials are stored next to a specimen. The plan action is nonmutating and does not create an evidence folder; run creates the evidence folder; verify mounts the existing evidence folder read-only. All actions keep no network, no added Linux capabilities, and a bounded temporary filesystem. Symlinks and ambiguous Docker mount delimiters are refused.
+
+The public GHA Linux amd64/arm64 jobs actually invoke the same Python host launcher and perform plan, run and verify on a self-authored synthetic APK, in addition to testing its command construction. Windows and macOS jobs test the host launcher contract; they do **not** yet test local Docker Desktop mounts.
+
+### Local read-only acceptance (Linux or Docker Desktop Linux backend)
+
+Build a local image as above, obtain its local SHA image ID, then:
+
+    python3 tools/aar_container_launch.py probe --image "$IMAGE" --profile python-core --platform linux/amd64
+    python3 tools/aar_container_launch.py plan --image "$IMAGE" --artifact /path/to/authorized-fixture.apk --work-root ./aar-evidence
+    python3 tools/aar_container_launch.py run --image "$IMAGE" --artifact /path/to/authorized-fixture.apk --work-root ./aar-evidence
+    python3 tools/aar_container_launch.py verify --image "$IMAGE" --artifact /path/to/authorized-fixture.apk --work-root ./aar-evidence
+
+Use py -3 .\tools\aar_container_launch.py and native host file paths on Windows PowerShell. Only supply an artifact you are authorized to analyze; do not use customer or account-sensitive APKs for the public-hosted test. Existing case receipts are never silently overwritten.
+
+### Compare local bytes with cloud fingerprints
+
+Each successful public GHA run publishes seven-day JSON-only tool-identity artifacts for its architecture. Download the named tool-profile artifact of the exact run into a local work folder, then compare it with an observation made from the intended local image. Example for amd64 Java profile:
+
+    gh run download RUN_ID -R SemperSupra/android-artifact-recovery --name aar-oci-java-amd64-RUN_ID -D ./aar-ci-baseline
+    python3 tools/aar_container_launch.py probe --image "$JAVA_IMAGE" --profile java-static --platform linux/amd64 > ./aar-local-observation.json
+    python3 tools/aar_image_parity.py compare --expected ./aar-ci-baseline/java-profile.json --actual ./aar-local-observation.json
+
+The SDK-specific cloud workcell also retains a hash-only sdk-private.json fingerprint. The local SDK-capable image can be probed with:
+
+    python3 tools/aar_container_launch.py probe --image "$SDK_LOCAL_IMAGE" --profile sdk-mounted --platform linux/amd64 > ./aar-local-sdk.json
+
+The comparator must fail on different architecture, different tool bytes or contract revision; no automatic normalization or inferred equivalence. A passing comparison proves **observed tool parity only**. A separately admitted immutable OCI manifest digest is still needed for exact image identity across venues, and no SDK-containing image is published by this PR. Do not post private-host receipts or SDK staging bytes into public workflow artifacts. Publication and component-license review remain HOLD.
