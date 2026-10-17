@@ -1,0 +1,22 @@
+# PRIVATE, LOCAL / EPHEMERAL BUILD ONLY.
+# No image push/publish step. No automated SDK license acceptance or SDK download.
+# From prior local java-static image (same separately qualified AAR tool identity).
+ARG BASE_IMAGE=aar-java-static:ci
+FROM ${BASE_IMAGE} AS sdk-private
+USER 0:0
+# The SDK context is built explicitly from a preinstalled, verified SDK subset.
+# docker build --build-context sdk_input=PATH_OF_EXPLICIT_STAGING ...
+COPY --from=sdk_input / /opt/android-sdk/
+ENV ANDROID_HOME=/opt/android-sdk ANDROID_SDK_ROOT=/opt/android-sdk \
+    PATH="/opt/android-sdk/build-tools/37.0.0:${PATH}"
+RUN set -eu; \
+    test -s /opt/android-sdk/sdk-provenance.json; \
+    test -s /opt/android-sdk/platforms/android-35/android.jar; \
+    /opt/android-sdk/build-tools/37.0.0/aapt2 version; \
+    /opt/android-sdk/build-tools/37.0.0/apksigner version; \
+    /opt/android-sdk/build-tools/37.0.0/d8 --version
+LABEL org.opencontainers.image.description="Private/local Android SDK-capable AAR image; redistribution NOT authorized" \
+      org.sempersupra.aar.registry-publish="hold" \
+      org.sempersupra.aar.license-review="unverified"
+USER 65532:65532
+CMD ["python", "tools/aar_image_parity.py", "probe", "--profile", "sdk-mounted"]
