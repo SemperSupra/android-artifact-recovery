@@ -87,8 +87,7 @@ class ImageLauncherTests(unittest.TestCase):
         self.assertIn("--security-opt", argv)
         self.assertNotIn("--privileged", argv)
         self.assertNotIn("--mount", argv)
-        self.assertEqual(argv[-4:], ["probe", "--profile", "python-core"][-4:]) if False else None
-        self.assertIn("aar_image_parity.py", argv)
+        self.assertIn("tools/aar_image_parity.py", argv)
 
     def test_artifact_read_only_output_separate(self):
         with tempfile.TemporaryDirectory() as td:
