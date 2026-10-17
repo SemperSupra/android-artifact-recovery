@@ -62,8 +62,22 @@ jobs:
           "$RUNNER_TEMP/jadx/bin/jadx" --version
           sha256sum "$RUNNER_TEMP/jadx.zip" "$dexdump" "$aapt2" "$apksigner"
       - name: Build independently authored Kotlin source-known APK
+        shell: bash
         working-directory: goldens/kotlin-dex
-        run: gradle --no-daemon testReleaseUnitTest assembleRelease
+        run: |
+          set -euo pipefail
+          # External Maven/Google resolution on ephemeral public runners can be transient.
+          # Bounded retry only; do not claim an APK or Q1 acceptance if both attempts fail.
+          for attempt in 1 2; do
+            if gradle --no-daemon --refresh-dependencies testReleaseUnitTest assembleRelease; then
+              echo "SOURCE_KNOWN_BUILD=PASS;ATTEMPT=$attempt"
+              exit 0
+            fi
+            echo "External Android build dependencies unresolved; attempt $attempt failed" >&2
+            if [ "$attempt" -eq 1 ]; then sleep 10; fi
+          done
+          echo "SOURCE_KNOWN_BUILD=BLOCKED_DEPENDENCY_RESOLUTION" >&2
+          exit 1
       - name: Execute local adapter and static low-level/JADX tools
         shell: bash
         run: |
