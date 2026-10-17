@@ -164,6 +164,28 @@ jobs:
           sha256sum "$work/source.apk" "$work/roundtrip.apk"
           echo "APKTOOL_AAPT2_RESOURCE_ROUNDTRIP=PASS;SEMANTIC_EQUIVALENCE=UNKNOWN"
 
+
+  cross-platform-synthetic:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [windows-2025, macos-15]
+    runs-on: ${{ matrix.platform }}
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Cross-platform read-only host presence
+        run: python tools/aar_local_case.py probe
+      - name: Run source-known and malicious archive tests
+        run: python -m unittest -v tests.test_aar_local_case tests.test_characterize_android_artifact
+
+# This job is portability-only: no exact user Windows wrappers or Mac M2 Ultra GPUs.
+
 # This branch's additional job intentionally uses only an authored public AAR golden.
 # Cloud success is NOT local model qualification, production readiness, or private-APK clearance.
 
