@@ -104,11 +104,12 @@ class ImageLauncherTests(unittest.TestCase):
             source.parent.mkdir()
             source.write_bytes(b"ZIP")
             output = root / "out"
-            argv = L.build_argv(engine="docker", image=self.IMAGE, action="plan",
+            argv = L.build_argv(engine="docker", image=self.IMAGE, action="run",
                                 source=source, output=output, prepare_output=False)
             self.assertFalse(output.exists())
             self.assertEqual(argv.count("--mount"), 2)
-            self.assertTrue(any("readonly" in a and "/inputs" in a for a in argv))
+            self.assertTrue(any("readonly" in a and "dst=/inputs/artifact.apk" in a for a in argv))
+            self.assertFalse(any("src="+str(source.parent)+"," in a for a in argv))
             self.assertIn("--network", argv)
             self.assertNotIn("host", argv)
 
@@ -126,6 +127,88 @@ class ImageLauncherTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "output"):
                 L.build_argv(engine="docker", image=self.IMAGE, action="run",
                              source=path, output=path.parent)
+
+
+    def test_plan_no_evidence_mount_or_write(self):
+        with tempfile.TemporaryDirectory() as td:
+            root=pathlib.Path(td)
+            source=root/"source.apk"
+            source.write_bytes(b"specimen")
+            evidence=root/"evidence"
+            argv=L.build_argv(engine="docker", image=self.IMAGE, action="plan",
+                              source=source, output=evidence)
+            self.assertFalse(evidence.exists())
+            self.assertEqual(argv.count("--mount"),1)
+            self.assertEqual(argv[argv.index("--mount")+1],
+                             f"type=bind,src={source},dst=/inputs/artifact.apk,readonly")
+
+    def test_verify_requires_existing_evidence_mounted_readonly(self):
+        with tempfile.TemporaryDirectory() as td:
+            root=pathlib.Path(td)
+            source=root/"source.apk"
+            source.write_bytes(b"specimen")
+            evidence=root/"evidence"
+            with self.assertRaisesRegex(ValueError,"existing output directory"):
+                L.build_argv(engine="docker",image=self.IMAGE,action="verify",
+                             source=source,output=evidence)
+            evidence.mkdir()
+            argv=L.build_argv(engine="docker",image=self.IMAGE,action="verify",
+                              source=source,output=evidence)
+            self.assertEqual(argv.count("--mount"),2)
+            self.assertIn(f"type=bind,src={evidence},dst=/work,readonly",argv)
+
+    def test_reject_input_and_output_symlink(self):
+        with tempfile.TemporaryDirectory() as td:
+            root=pathlib.Path(td)
+            source=root/"original.apk"
+            source.write_bytes(b"specimen")
+            alias=root/"alias.apk"
+            alias.symlink_to(source)
+            with self.assertRaisesRegex(ValueError,"input artifact symlink"):
+                L.build_argv(engine="docker",image=self.IMAGE,action="plan",
+                             source=alias,output=root/"out")
+            real=root/"real"
+            real.mkdir()
+            linked=root/"linked"
+            linked.symlink_to(real,target_is_directory=True)
+            with self.assertRaisesRegex(ValueError,"output symlink"):
+                L.build_argv(engine="docker",image=self.IMAGE,action="run",
+                             source=source,output=linked)
+
+    def test_no_sibling_file_exposure(self):
+        with tempfile.TemporaryDirectory() as td:
+            root=pathlib.Path(td)
+            source=root/"allowed.apk"
+            private=root/"other-sensitive-thing.txt"
+            source.write_bytes(b"fixture")
+            private.write_text("secret",encoding="utf-8")
+            argv=L.build_argv(engine="docker",image=self.IMAGE,action="run",
+                              source=source,output=root/"results",prepare_output=False)
+            mounts=[argv[i+1] for i,x in enumerate(argv) if x=="--mount"]
+            self.assertEqual(len(mounts),2)
+            self.assertTrue(mounts[0].startswith("type=bind,src="+str(source)+","))
+            self.assertNotIn(str(private),str(mounts))
+            self.assertNotIn("src="+str(root)+",",str(mounts))
+
+    def test_probe_specific_profile_no_unneeded_mounts(self):
+        argv=L.build_argv(engine="docker",image=self.IMAGE,action="probe",
+                          source=None,output=None,profile="sdk-mounted",
+                          platform="linux/amd64")
+        self.assertEqual(argv[-2:],["--profile","sdk-mounted"])
+        self.assertNotIn("--mount",argv)
+        with self.assertRaisesRegex(ValueError,"probe-only"):
+            L.build_argv(engine="docker",image=self.IMAGE,action="run",
+                         source=pathlib.Path("missing.apk"),output=pathlib.Path("evidence"),
+                         profile="sdk-mounted")
+
+    def test_comma_delimited_mount_path_denied(self):
+        with tempfile.TemporaryDirectory() as td:
+            root=pathlib.Path(td)
+            source=root/"fixture,evil.apk"
+            source.write_bytes(b"specimen")
+            with self.assertRaisesRegex(ValueError,"unsupported delimiter"):
+                L.build_argv(engine="docker",image=self.IMAGE,action="plan",
+                             source=source,output=root/"out")
 
     def test_cli_dry_run_requires_no_docker(self):
         command = [sys.executable, str(ROOT/"tools"/"aar_container_launch.py"),
