@@ -109,7 +109,7 @@ class ImageLauncherTests(unittest.TestCase):
             self.assertFalse(output.exists())
             self.assertEqual(argv.count("--mount"), 2)
             self.assertTrue(any("readonly" in a and "dst=/inputs/artifact.apk" in a for a in argv))
-            self.assertFalse(any("src="+str(source.parent)+"," in a for a in argv))
+            self.assertFalse(any("src="+str(source.parent.resolve())+"," in a for a in argv))
             self.assertIn("--network", argv)
             self.assertNotIn("host", argv)
 
@@ -140,7 +140,7 @@ class ImageLauncherTests(unittest.TestCase):
             self.assertFalse(evidence.exists())
             self.assertEqual(argv.count("--mount"),1)
             self.assertEqual(argv[argv.index("--mount")+1],
-                             f"type=bind,src={source},dst=/inputs/artifact.apk,readonly")
+                             f"type=bind,src={source.resolve()},dst=/inputs/artifact.apk,readonly")
 
     def test_verify_requires_existing_evidence_mounted_readonly(self):
         with tempfile.TemporaryDirectory() as td:
@@ -155,7 +155,7 @@ class ImageLauncherTests(unittest.TestCase):
             argv=L.build_argv(engine="docker",image=self.IMAGE,action="verify",
                               source=source,output=evidence)
             self.assertEqual(argv.count("--mount"),2)
-            self.assertIn(f"type=bind,src={evidence},dst=/work,readonly",argv)
+            self.assertIn(f"type=bind,src={evidence.resolve()},dst=/work,readonly",argv)
 
     def test_reject_input_and_output_symlink(self):
         with tempfile.TemporaryDirectory() as td:
@@ -186,9 +186,9 @@ class ImageLauncherTests(unittest.TestCase):
                               source=source,output=root/"results",prepare_output=False)
             mounts=[argv[i+1] for i,x in enumerate(argv) if x=="--mount"]
             self.assertEqual(len(mounts),2)
-            self.assertTrue(mounts[0].startswith("type=bind,src="+str(source)+","))
+            self.assertTrue(mounts[0].startswith("type=bind,src="+str(source.resolve())+","))
             self.assertNotIn(str(private),str(mounts))
-            self.assertNotIn("src="+str(root)+",",str(mounts))
+            self.assertNotIn("src="+str(root.resolve())+",",str(mounts))
 
     def test_probe_specific_profile_no_unneeded_mounts(self):
         argv=L.build_argv(engine="docker",image=self.IMAGE,action="probe",
