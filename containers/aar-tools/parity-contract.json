@@ -1,0 +1,73 @@
+{
+  "schema": "aar-tool-parity-contract/v0",
+  "platform": "linux",
+  "profiles": {
+    "python-core": {
+      "requires": [
+        "python",
+        "characterizer"
+      ],
+      "prohibits": [
+        "android-sdk-assumed",
+        "inference-endpoint-assumed",
+        "runtime-behavior-accepted"
+      ]
+    },
+    "java-static": {
+      "requires": [
+        "python",
+        "characterizer",
+        "java",
+        "jadx",
+        "jadx_core_jar",
+        "apktool"
+      ],
+      "prohibits": [
+        "android-sdk-assumed",
+        "native-elf-decompiler-assumed",
+        "inference-endpoint-assumed",
+        "runtime-behavior-accepted"
+      ]
+    }
+  },
+  "tools": {
+    "python": {
+      "path": "/usr/local/bin/python",
+      "argv": [
+        "--version"
+      ]
+    },
+    "characterizer": {
+      "path": "/opt/aar/tools/characterize_android_artifact.py"
+    },
+    "java": {
+      "path": "/usr/bin/java",
+      "argv": [
+        "-version"
+      ]
+    },
+    "jadx": {
+      "path": "/opt/jadx/bin/jadx",
+      "argv": [
+        "--version"
+      ]
+    },
+    "jadx_core_jar": {
+      "glob": "/opt/jadx/lib/jadx-core-*.jar"
+    },
+    "apktool": {
+      "path": "/opt/apktool-3.0.3.jar",
+      "sha256": "dbf930b076c6b9be08d57c449cacefc3bdd6b71ebd59b3066fc0e1f5b14f9423"
+    }
+  },
+  "checks": {
+    "immutable_image_digest": true,
+    "arch_specific": true,
+    "network_default": "none",
+    "rootfs_default": "read-only",
+    "capabilities_default": "drop-all",
+    "privileged": false,
+    "host_docker_socket": false,
+    "host_model_secrets": false
+  }
+}
