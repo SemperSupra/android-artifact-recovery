@@ -43,6 +43,8 @@ def contract(path: pathlib.Path) -> dict:
 def observe(profile: str, cfg: dict) -> dict:
     if sys.platform != cfg["platform"]:
         raise ValueError("this OCI tool profile requires Linux")
+    if profile == "sdk-mounted" and platform.machine().lower() not in ("x86_64", "amd64"):
+        raise ValueError("sdk-mounted profile requires Linux amd64 binary execution")
     required = cfg["profiles"][profile]["requires"]
     tools: dict = {}
     for key in required:
@@ -116,7 +118,7 @@ def compare(expected: dict, actual: dict) -> dict:
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("action", choices=["probe", "compare"])
-    p.add_argument("--profile", choices=["python-core", "java-static"], default="python-core")
+    p.add_argument("--profile", choices=["python-core", "java-static", "sdk-mounted"], default="python-core")
     p.add_argument("--contract", type=pathlib.Path, default=CONTRACT)
     p.add_argument("--expected", type=pathlib.Path)
     p.add_argument("--actual", type=pathlib.Path)
