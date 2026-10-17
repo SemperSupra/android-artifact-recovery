@@ -86,7 +86,15 @@ jobs:
           python3 tools/aar_container_launch.py probe --image aar-python-core:ci --allow-local-test-tag --dry-run
 
   pinned-java-static:
-    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 18
     steps:
       - uses: actions/checkout@v4
@@ -101,6 +109,7 @@ jobs:
           docker build -f containers/aar-tools/Dockerfile --target java-static \
             --build-arg "BASE_IMAGE=$base" --tag aar-java-static:ci .
           docker image inspect aar-java-static:ci --format 'IMAGE={{.Id}} ARCH={{.Architecture}} SIZE={{.Size}}'
+          test "$(docker image inspect aar-java-static:ci --format '{{.Architecture}}')" = "${{ matrix.arch }}"
       - name: Verify binary hashes and capability admission offline
         shell: bash
         run: |
