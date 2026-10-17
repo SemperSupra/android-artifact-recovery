@@ -1,0 +1,121 @@
+name: Qualify stateless AAR OCI tool parity
+on:
+  pull_request:
+    paths:
+      - "containers/aar-tools/**"
+      - "tools/aar_container_launch.py"
+      - "tools/aar_image_parity.py"
+      - "tests/test_aar_image_parity.py"
+      - ".github/workflows/qualify-aar-tool-oci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  portable-host-contract:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: No-Docker host adapter negative controls
+        run: python -m unittest -v tests.test_aar_image_parity
+
+  isolated-linux-image:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Resolve exact public multiarch base manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull python:3.12-slim-bookworm
+          base="$(docker image inspect python:3.12-slim-bookworm --format '{{index .RepoDigests 0}}')"
+          case "$base" in *@sha256:*) ;; *) exit 1;; esac
+          echo "BASE_REF=$base" >> "$GITHUB_ENV"
+          echo "RESOLVED_BASE_MANIFEST=$base"
+      - name: Build offline Python capsule for native runner architecture
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build -f containers/aar-tools/Dockerfile \
+            --target python-core --build-arg "BASE_IMAGE=$BASE_REF" \
+            --tag aar-python-core:ci .
+          docker image inspect aar-python-core:ci --format 'IMAGE={{.Id}} ARCH={{.Architecture}} OS={{.Os}}'
+          test "$(docker image inspect aar-python-core:ci --format '{{.Architecture}}')" = "${{ matrix.arch }}"
+      - name: Authoritative synthetic suite runs offline in restricted container
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(--rm --network none --read-only --cap-drop ALL
+               --security-opt no-new-privileges --pids-limit 128
+               --memory 2g --cpus 2 --tmpfs /tmp:rw,nosuid,size=256m
+               --user 65532:65532)
+          docker run "${opts[@]}" aar-python-core:ci \
+            python -m unittest -v tests.test_aar_local_case tests.test_characterize_android_artifact tests.test_aar_image_parity
+          docker run "${opts[@]}" aar-python-core:ci \
+            python tools/aar_image_parity.py probe --profile python-core > observed-1.json
+          docker run "${opts[@]}" aar-python-core:ci \
+            python tools/aar_image_parity.py probe --profile python-core > observed-2.json
+          python3 tools/aar_image_parity.py compare --expected observed-1.json --actual observed-2.json
+          echo "OCI_PYTHON_CORE_${{ matrix.arch }}=PASS"
+      - name: Exercise actual host adapter
+        shell: bash
+        run: |
+          python3 tools/aar_container_launch.py probe --image aar-python-core:ci --allow-local-test-tag
+          python3 tools/aar_container_launch.py probe --image aar-python-core:ci --allow-local-test-tag --dry-run
+
+  pinned-java-static:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Resolve exact base and build pinned Java static tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull python:3.12-slim-bookworm
+          base="$(docker image inspect python:3.12-slim-bookworm --format '{{index .RepoDigests 0}}')"
+          docker build -f containers/aar-tools/Dockerfile --target java-static \
+            --build-arg "BASE_IMAGE=$base" --tag aar-java-static:ci .
+          docker image inspect aar-java-static:ci --format 'IMAGE={{.Id}} ARCH={{.Architecture}} SIZE={{.Size}}'
+      - name: Verify binary hashes and capability admission offline
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --pids-limit 128 \
+            --memory 3g --cpus 2 --tmpfs /tmp:rw,nosuid,size=256m \
+            --user 65532:65532 aar-java-static:ci \
+            python tools/aar_image_parity.py probe --profile java-static > java-profile.json
+          python3 - <<'PY'
+          import json
+          x=json.load(open("java-profile.json"))
+          assert x["profile"]=="java-static"
+          assert x["tools"]["apktool"]["sha256"]=="dbf930b076c6b9be08d57c449cacefc3bdd6b71ebd59b3066fc0e1f5b14f9423"
+          assert "jadx_core_jar" in x["tools"] and "java" in x["tools"]
+          assert x["claims"]["apk_source_recovery"]=="UNKNOWN"
+          print("OCI_JAVA_STATIC_ARTIFACT_IDENTITY=PASS")
+          PY
