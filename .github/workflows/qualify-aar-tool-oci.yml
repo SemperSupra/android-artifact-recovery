@@ -84,6 +84,14 @@ jobs:
         run: |
           python3 tools/aar_container_launch.py probe --image aar-python-core:ci --allow-local-test-tag
           python3 tools/aar_container_launch.py probe --image aar-python-core:ci --allow-local-test-tag --dry-run
+      - name: Retain public-safe capability fingerprint
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aar-oci-python-${{ matrix.arch }}-${{ github.run_id }}
+          path: observed-1.json
+          if-no-files-found: ignore
+          retention-days: 7
 
   pinned-java-static:
     strategy:
@@ -128,3 +136,11 @@ jobs:
           assert x["claims"]["apk_source_recovery"]=="UNKNOWN"
           print("OCI_JAVA_STATIC_ARTIFACT_IDENTITY=PASS")
           PY
+      - name: Retain Java and JADX/Apktool artifact fingerprint
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aar-oci-java-${{ matrix.arch }}-${{ github.run_id }}
+          path: java-profile.json
+          if-no-files-found: ignore
+          retention-days: 7
