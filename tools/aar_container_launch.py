@@ -19,9 +19,11 @@ PIN = re.compile(r"^(?:[a-z0-9]+(?:[._/-][a-z0-9]+)*(?::[a-z0-9._-]+)?@)?sha256:
 
 def build_argv(*, engine: str, image: str, action: str, source: pathlib.Path | None,
                output: pathlib.Path | None, test_image: bool = False,
-               prepare_output: bool = True) -> list[str]:
+               prepare_output: bool = True, platform: str | None = None) -> list[str]:
     if not test_image and not PIN.fullmatch(image):
         raise ValueError("image must be immutable digest ref (registry/repo@sha256:...)")
+    if platform is not None and platform not in ("linux/amd64", "linux/arm64"):
+        raise ValueError("unsupported OCI execution platform")
     if action != "probe" and (source is None or output is None):
         raise ValueError("run, plan and verify require --artifact and --work-root")
     if action == "probe" and (source is not None or output is not None):
@@ -30,6 +32,8 @@ def build_argv(*, engine: str, image: str, action: str, source: pathlib.Path | N
             "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
             "--pids-limit", "128", "--memory", "2g", "--cpus", "2",
             "--tmpfs", "/tmp:rw,nosuid,size=256m"]
+    if platform:
+        args += ["--platform", platform]
     if os.name != "nt":
         args += ["--user", f"{os.getuid()}:{os.getgid()}"]
     if action == "probe":
@@ -58,6 +62,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("probe", "plan", "run", "verify"))
     parser.add_argument("--engine", choices=("docker", "podman"), default="docker")
+    parser.add_argument("--platform", choices=("linux/amd64", "linux/arm64"),
+                        help="Explicitly select the OCI substrate/ABI for parity")
     parser.add_argument("--image", required=True)
     parser.add_argument("--artifact", type=pathlib.Path)
     parser.add_argument("--work-root", type=pathlib.Path)
@@ -69,7 +75,7 @@ def main() -> int:
         argv = build_argv(engine=args.engine, image=args.image, action=args.action,
                           source=args.artifact, output=args.work_root,
                           test_image=args.allow_local_test_tag,
-                          prepare_output=not args.dry_run)
+                          prepare_output=not args.dry_run, platform=args.platform)
         if args.dry_run:
             print(json.dumps({"schema":"aar-oci-launch-preview/v0", "argv":argv,
                               "executed":False, "network":"none", "claims":"NONE"}, indent=2))
