@@ -226,6 +226,7 @@ jobs:
           mkdir -p "$out"
           chmod 0777 "$out"
           abs="$(realpath "$apk")"
+          set +e
           docker run --rm --network none --read-only --cap-drop ALL \
             --security-opt no-new-privileges --pids-limit 128 \
             --memory 3g --cpus 2 --tmpfs /tmp:rw,nosuid,size=512m \
@@ -235,6 +236,9 @@ jobs:
             aar-sdk-private:ci python tools/recover_apk_static.py /inputs/fixture.apk \
               --out /outputs/recovered --jadx /opt/jadx/bin/jadx \
               --dexdump /opt/android-sdk/build-tools/37.0.0/dexdump
+          producer_rc=$?
+          set -e
+          echo "STATIC_PRODUCER_EXIT=$producer_rc"
           python3 - "$out/recovered/recovery-manifest.json" <<'PY'
           import json,sys
           m=json.load(open(sys.argv[1]))
@@ -242,6 +246,12 @@ jobs:
           assert m["dex_recovery"]["root_dex_count"] >= 1
           assert any(x["producer"]=="dexdump" and x["result"]["returncode"]==0
                      for x in m["representations"])
+          for rep in m["representations"]:
+              if rep["producer"]=="jadx":
+                  r=rep["result"]
+                  print("JADX_EXIT="+str(r["returncode"]))
+                  print("JADX_STDERR="+str(r.get("stderr",""))[:7000])
+                  print("JADX_STDOUT="+str(r.get("stdout",""))[:3500])
           assert m["status"] in ("PASS","PARTIAL")
           print("OCI_PRIVATE_SDK_STATIC_STATUS="+m["status"])
           print("OCI_PRIVATE_SDK_STATIC_PARTIALS="+json.dumps(m.get("partials",[])))
