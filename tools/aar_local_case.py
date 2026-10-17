@@ -201,10 +201,25 @@ def probe() -> None:
     binaries = ("java", "javac", "jadx", "apktool", "aapt2", "apksigner",
                 "dexdump", "llvm-readelf", "llvm-objdump", "adb",
                 "emulator", "analyzeHeadless", "goose", "aider", "pi",
-                "opencode", "qwen", "vibe")
+                "opencode", "qwen", "vibe", "pi-bigmac", "aider-bigmac",
+                "goose-bigmac", "vibe-bigmac", "opencode-bigmac", "qwen-bigmac")
+
+    def find_local(name: str) -> str | None:
+        installed = shutil.which(name)
+        if installed:
+            return installed
+        # Windows user-scoped actors can be PowerShell wrappers, not PATH executables.
+        local_bin = pathlib.Path.home() / ".local" / "bin"
+        for ext in ("", ".exe", ".cmd", ".bat", ".ps1"):
+            candidate = local_bin / (name + ext)
+            if candidate.is_file():
+                return str(candidate)
+        return None
+
     print(json.dumps({"schema": "aar-local-probe/v0",
                       "python": sys.version.split()[0],
-                      "executables": {name: shutil.which(name) for name in binaries},
+                      "platform": sys.platform,
+                      "executables": {name: find_local(name) for name in binaries},
                       "qualification": "PRESENCE_ONLY_NOT_MODEL_OR_TOOL_PASS"},
                      indent=2, sort_keys=True))
 
