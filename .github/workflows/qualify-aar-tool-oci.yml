@@ -237,6 +237,24 @@ jobs:
           assert x["claims"]["apk_source_recovery"]=="UNKNOWN"
           print("OCI_PRIVATE_SDK_TOOL_IDENTITY=PASS;LICENSE_REVIEW=PENDING")
           PY
+      - name: Re-probe SDK through real host launcher and compare tool receipts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/aar_container_launch.py probe --allow-local-test-tag \
+            --image aar-sdk-private:ci --profile sdk-mounted --platform linux/amd64 \
+            > sdk-private-launcher.json
+          python3 tools/aar_image_parity.py compare \
+            --expected sdk-private.json --actual sdk-private-launcher.json
+          echo "OCI_SDK_LAUNCHER_FINGERPRINT=PASS"
+      - name: Retain hash-only local-parity sample (no SDK binaries)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aar-sdk-private-hashes-${{ github.run_id }}
+          path: sdk-private.json
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Rebuild source-known Kotlin golden without assuming cached Gradle
         shell: bash
         working-directory: goldens/kotlin-dex
