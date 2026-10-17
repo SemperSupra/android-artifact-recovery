@@ -1,0 +1,193 @@
+name: Qualify AAR local case admission
+on:
+  pull_request:
+    paths:
+      - "tools/aar_local_case.py"
+      - "tools/characterize_android_artifact.py"
+      - "tests/test_aar_local_case.py"
+      - ".github/workflows/qualify-aar-local-case.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-admission:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Host and tool presence probe (not a model qualification)
+        run: python3 tools/aar_local_case.py probe
+      - name: Public synthetic fixture and adversarial regressions
+        run: python3 -m unittest -v tests.test_aar_local_case
+      - name: Existing AAR artifact characterizer regression
+        run: python3 -m unittest -v tests.test_characterize_android_artifact
+
+
+  source-known-toolchain:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+      - name: Pin Android build-tools and external JADX binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          dexdump="$(find "$sdk/build-tools" -maxdepth 2 -type f -name dexdump | sort -V | tail -n1)"
+          aapt2="$(find "$sdk/build-tools" -maxdepth 2 -type f -name aapt2 | sort -V | tail -n1)"
+          apksigner="$(find "$sdk/build-tools" -maxdepth 2 -type f -name apksigner | sort -V | tail -n1)"
+          test -x "$dexdump" && test -x "$aapt2" && test -x "$apksigner"
+          echo "DEXDUMP=$dexdump" >> "$GITHUB_ENV"
+          echo "AAPT2=$aapt2" >> "$GITHUB_ENV"
+          echo "APKSIGNER=$apksigner" >> "$GITHUB_ENV"
+          curl -fL --retry 3 --max-time 120 \
+            "https://github.com/skylot/jadx/releases/download/v1.5.6/jadx-1.5.6.zip" \
+            -o "$RUNNER_TEMP/jadx.zip"
+          echo '545ea2be9c242511bc145755cf4bda2485ade42966e096f8b4d3da2a230e8974  '"$RUNNER_TEMP/jadx.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/jadx.zip" -d "$RUNNER_TEMP/jadx"
+          echo "JADX=$RUNNER_TEMP/jadx/bin/jadx" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/jadx/bin/jadx" --version
+          sha256sum "$RUNNER_TEMP/jadx.zip" "$dexdump" "$aapt2" "$apksigner"
+      - name: Build independently authored Kotlin source-known APK
+        shell: bash
+        working-directory: goldens/kotlin-dex
+        run: |
+          set -euo pipefail
+          # External Maven/Google resolution on ephemeral public runners can be transient.
+          # Bounded retry only; do not claim an APK or Q1 acceptance if both attempts fail.
+          for attempt in 1 2; do
+            if gradle --no-daemon --refresh-dependencies testReleaseUnitTest assembleRelease; then
+              echo "SOURCE_KNOWN_BUILD=PASS;ATTEMPT=$attempt"
+              exit 0
+            fi
+            echo "External Android build dependencies unresolved; attempt $attempt failed" >&2
+            if [ "$attempt" -eq 1 ]; then sleep 10; fi
+          done
+          echo "SOURCE_KNOWN_BUILD=BLOCKED_DEPENDENCY_RESOLUTION" >&2
+          exit 1
+      - name: Execute local adapter and static low-level/JADX tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="$(find goldens/kotlin-dex/app/build/outputs/apk/release -type f -name '*.apk' | head -n1)"
+          test -n "$apk"
+          sha256sum "$apk"
+          "$AAPT2" dump badging "$apk" | head -n6
+          "$APKSIGNER" version
+          python3 tools/aar_local_case.py plan "$apk" --work-root "$RUNNER_TEMP/aar-cases"
+          python3 tools/aar_local_case.py run "$apk" --work-root "$RUNNER_TEMP/aar-cases"
+          python3 tools/aar_local_case.py verify "$apk" --work-root "$RUNNER_TEMP/aar-cases"
+          python3 tools/recover_apk_static.py "$apk" \
+            --out "$RUNNER_TEMP/aar-static" --jadx "$JADX" --dexdump "$DEXDUMP"
+          key="$(sha256sum "$apk" | cut -d' ' -f1)"
+          python3 tools/summarize_recovery_evidence.py \
+            --artifact-sha256 "$key" --static "$RUNNER_TEMP/aar-static/recovery-manifest.json" \
+            --out "$RUNNER_TEMP/aar-evidence.json"
+          python3 - "$RUNNER_TEMP/aar-static/recovery-manifest.json" "$RUNNER_TEMP/aar-evidence.json" <<'PY'
+          import json,sys
+          static=json.load(open(sys.argv[1]))
+          evidence=json.load(open(sys.argv[2]))
+          assert static["schema"] == "aar-static-recovery/v0"
+          assert static["dex_recovery"]["root_dex_count"] >= 1
+          assert static["status"] in ("PASS", "PARTIAL")
+          assert isinstance(evidence,dict)
+          print("SOURCE_KNOWN_TOOLCHAIN_EXECUTION=PASS")
+          print("STATIC_REPRESENTATION_STATUS=" + static["status"])
+          for rep in static["representations"]:
+              result=rep.get("result", {})
+              print("REPRESENTATION",rep["producer"],"EXIT",result.get("returncode"),"STDERR",str(result.get("stderr",""))[:1200])
+          PY
+
+
+  external-resource-roundtrip:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Pin external Apktool jar and SDK AAPT2
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 --max-time 120 \
+            "https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar" \
+            -o "$RUNNER_TEMP/apktool.jar"
+          echo 'dbf930b076c6b9be08d57c449cacefc3bdd6b71ebd59b3066fc0e1f5b14f9423  '"$RUNNER_TEMP/apktool.jar" | sha256sum -c -
+          java -jar "$RUNNER_TEMP/apktool.jar" --version
+          sdk="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          aapt2="$(find "$sdk/build-tools" -maxdepth 2 -type f -name aapt2 | sort -V | tail -n1)"
+          test -x "$aapt2"
+          echo "AAPT2=$aapt2" >> "$GITHUB_ENV"
+          echo "ANDROID35=$sdk/platforms/android-35/android.jar" >> "$GITHUB_ENV"
+          test -f "$sdk/platforms/android-35/android.jar"
+      - name: Author simple synthetic resource APK and cross-tool roundtrip
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/aar-resource-golden"
+          mkdir -p "$work/res/values"
+          cat > "$work/res/values/strings.xml" <<'XML'
+          <resources><string name="app_name">AAR authored golden</string></resources>
+          XML
+          cat > "$work/AndroidManifest.xml" <<'XML'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="org.sempersupra.aar.cloudfixture">
+            <application android:label="@string/app_name"/>
+          </manifest>
+          XML
+          "$AAPT2" compile --dir "$work/res" -o "$work/compiled.zip"
+          "$AAPT2" link -o "$work/source.apk" -I "$ANDROID35" \
+            --manifest "$work/AndroidManifest.xml" "$work/compiled.zip"
+          "$AAPT2" dump badging "$work/source.apk" | grep -F "org.sempersupra.aar.cloudfixture"
+          java -jar "$RUNNER_TEMP/apktool.jar" d -f "$work/source.apk" -o "$work/decoded"
+          grep -q "AAR authored golden" "$work/decoded/res/values/strings.xml"
+          java -jar "$RUNNER_TEMP/apktool.jar" b "$work/decoded" -o "$work/roundtrip.apk"
+          "$AAPT2" dump badging "$work/roundtrip.apk" | grep -F "org.sempersupra.aar.cloudfixture"
+          unzip -t "$work/roundtrip.apk" | tail -n1
+          sha256sum "$work/source.apk" "$work/roundtrip.apk"
+          echo "APKTOOL_AAPT2_RESOURCE_ROUNDTRIP=PASS;SEMANTIC_EQUIVALENCE=UNKNOWN"
+
+
+  cross-platform-synthetic:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [windows-2025, macos-15]
+    runs-on: ${{ matrix.platform }}
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Cross-platform read-only host presence
+        run: python tools/aar_local_case.py probe
+      - name: Run source-known and malicious archive tests
+        run: python -m unittest -v tests.test_aar_local_case tests.test_characterize_android_artifact
+
+# This job is portability-only: no exact user Windows wrappers or Mac M2 Ultra GPUs.
+
+# This branch's additional job intentionally uses only an authored public AAR golden.
+# Cloud success is NOT local model qualification, production readiness, or private-APK clearance.
+
+# Public authored synthetic fixtures only. No authenticated APKs, private artifacts,
+# private repo contents, credentials, vendor LLM calls, runner grants or production deployment.
