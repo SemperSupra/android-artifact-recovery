@@ -96,9 +96,17 @@ jobs:
           python3 - <<'PY'
           import os,pathlib,zipfile
           directory=pathlib.Path(os.environ["AAR_FIXTURE"])
-          with zipfile.ZipFile(directory/"synthetic.apk","w",compression=zipfile.ZIP_DEFLATED) as z:
-              z.writestr("classes.dex",b"dex\n035\x00"+b"golden"*10)
-              z.writestr("assets/opaque.bin",b"\x00asm\x01\x00\x00\x00")
+          with zipfile.ZipFile(directory/"synthetic.apk","w",compression=zipfile.ZIP_STORED) as z:
+              for name,data in (("classes.dex",b"dex\n035\x00"+b"golden"*10),
+                                ("assets/opaque.bin",b"\x00asm\x01\x00\x00\x00")):
+                  entry=zipfile.ZipInfo(name,(1980,1,1,0,0,0))
+                  entry.compress_type=zipfile.ZIP_STORED
+                  entry.external_attr=0o644 << 16
+                  z.writestr(entry,data)
+          import hashlib
+          digest=hashlib.sha256((directory/"synthetic.apk").read_bytes()).hexdigest()
+          assert digest=="0d965ce548362be2afbbeff8083f785bceeed19f13bbdbcdc0eaddb7de5e651e",digest
+          print("OCI_CANONICAL_TEST_APK_SHA256="+digest)
           (directory/"private-neighbor.txt").write_text("must not be visible inside tool capsule")
           PY
           evidence="$RUNNER_TEMP/aar-one-file-evidence"
