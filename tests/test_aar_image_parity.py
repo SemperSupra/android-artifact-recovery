@@ -89,6 +89,14 @@ class ImageLauncherTests(unittest.TestCase):
         self.assertNotIn("--mount", argv)
         self.assertIn("tools/aar_image_parity.py", argv)
 
+    def test_explicit_architecture_selection(self):
+        argv = L.build_argv(engine="docker", image=self.IMAGE, action="probe",
+                            source=None, output=None, platform="linux/amd64")
+        self.assertEqual(argv[argv.index("--platform")+1], "linux/amd64")
+        with self.assertRaisesRegex(ValueError, "unsupported OCI"):
+            L.build_argv(engine="docker", image=self.IMAGE, action="probe",
+                         source=None, output=None, platform="windows/amd64")
+
     def test_artifact_read_only_output_separate(self):
         with tempfile.TemporaryDirectory() as td:
             root = pathlib.Path(td)
