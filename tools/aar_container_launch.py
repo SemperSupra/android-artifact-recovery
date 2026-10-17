@@ -18,7 +18,8 @@ PIN = re.compile(r"^(?:[a-z0-9]+(?:[._/-][a-z0-9]+)*(?::[a-z0-9._-]+)?@)?sha256:
 
 
 def build_argv(*, engine: str, image: str, action: str, source: pathlib.Path | None,
-               output: pathlib.Path | None, test_image: bool = False) -> list[str]:
+               output: pathlib.Path | None, test_image: bool = False,
+               prepare_output: bool = True) -> list[str]:
     if not test_image and not PIN.fullmatch(image):
         raise ValueError("image must be immutable digest ref (registry/repo@sha256:...)")
     if action != "probe" and (source is None or output is None):
@@ -42,9 +43,10 @@ def build_argv(*, engine: str, image: str, action: str, source: pathlib.Path | N
         if src.parent == dest or dest in src.parents:
             raise ValueError("output directory must not contain the input artifact")
         # Caller chooses the destination; create it explicitly once with host permissions.
-        dest.mkdir(parents=True, exist_ok=True)
-        if not dest.is_dir():
-            raise ValueError("output is not a directory")
+        if prepare_output:
+            dest.mkdir(parents=True, exist_ok=True)
+            if not dest.is_dir():
+                raise ValueError("output is not a directory")
         args += ["--mount", f"type=bind,src={src.parent},dst=/inputs,readonly",
                  "--mount", f"type=bind,src={dest},dst=/work",
                  image, "python", "tools/aar_local_case.py", action,
@@ -66,7 +68,8 @@ def main() -> int:
     try:
         argv = build_argv(engine=args.engine, image=args.image, action=args.action,
                           source=args.artifact, output=args.work_root,
-                          test_image=args.allow_local_test_tag)
+                          test_image=args.allow_local_test_tag,
+                          prepare_output=not args.dry_run)
         if args.dry_run:
             print(json.dumps({"schema":"aar-oci-launch-preview/v0", "argv":argv,
                               "executed":False, "network":"none", "claims":"NONE"}, indent=2))
