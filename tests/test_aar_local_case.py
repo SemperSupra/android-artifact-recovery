@@ -144,13 +144,17 @@ class LocalCaseTests(unittest.TestCase):
         self.assertEqual(report["summary"]["apk_count"], 2)
 
     def test_crc_corruption_rejected(self):
-        blob = bytearray(fixture())
-        pos = blob.find(b"const value")
-        if pos < 0:
-            self.skipTest("deflate not suitable for simple byte corruption; zip metadata validated elsewhere")
+        raw = io.BytesIO()
+        with zipfile.ZipFile(raw, "w", compression=zipfile.ZIP_STORED) as z:
+            z.writestr("classes.dex", b"dex\n035\x00ABCDEF")
+        blob = bytearray(raw.getvalue())
+        pos = blob.find(b"ABCDEF")
+        self.assertGreaterEqual(pos, 0)
         blob[pos] ^= 1
         self.artifact.write_bytes(blob)
-        self.assertEqual(self.invoke("run").returncode, 2)
+        cp = self.invoke("run")
+        self.assertEqual(cp.returncode, 2)
+        self.assertIn("corrupt", cp.stderr)
 
     def test_unknown_suffixed_input_rejected(self):
         path = self.root / "specimen.exe"
