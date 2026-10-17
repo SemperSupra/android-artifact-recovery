@@ -28,6 +28,27 @@
         "inference-endpoint-assumed",
         "runtime-behavior-accepted"
       ]
+    },
+    "sdk-mounted": {
+      "requires": [
+        "python",
+        "characterizer",
+        "java",
+        "jadx",
+        "jadx_library_set",
+        "apktool",
+        "sdk_aapt2",
+        "sdk_dexdump",
+        "sdk_apksigner",
+        "sdk_d8",
+        "sdk_android_35"
+      ],
+      "prohibits": [
+        "android-sdk-redistribution",
+        "sdk-license-automatic-acceptance",
+        "inference-endpoint-assumed",
+        "runtime-behavior-accepted"
+      ]
     }
   },
   "tools": {
@@ -58,6 +79,33 @@
     },
     "jadx_library_set": {
       "glob": "/opt/jadx/**/*.jar"
+    },
+    "sdk_aapt2": {
+      "path": "/opt/android-sdk/build-tools/37.0.0/aapt2",
+      "sha256": "0f1c0e560f99db510a76ebc99ad5c3e68438f62e8e8617018a716ca4a589a699",
+      "argv": [
+        "version"
+      ]
+    },
+    "sdk_dexdump": {
+      "path": "/opt/android-sdk/build-tools/37.0.0/dexdump",
+      "sha256": "860eac6a099ae2b3f0e39a1c7e43272f8bab48440c19a941e3fc87de099d7bd6"
+    },
+    "sdk_apksigner": {
+      "path": "/opt/android-sdk/build-tools/37.0.0/apksigner",
+      "sha256": "b47549e373b895ce6ca620d0c7887e674d9615ffa837a86ac601dcfd04adb0f0",
+      "argv": [
+        "version"
+      ]
+    },
+    "sdk_d8": {
+      "path": "/opt/android-sdk/build-tools/37.0.0/d8",
+      "argv": [
+        "--version"
+      ]
+    },
+    "sdk_android_35": {
+      "path": "/opt/android-sdk/platforms/android-35/android.jar"
     }
   },
   "checks": {
@@ -68,6 +116,8 @@
     "capabilities_default": "drop-all",
     "privileged": false,
     "host_docker_socket": false,
-    "host_model_secrets": false
+    "host_model_secrets": false,
+    "external_sdk_mount": "read-only; exactly matched build-tools 37.0.0 x86_64",
+    "sdk_redistribution": false
   }
 }
