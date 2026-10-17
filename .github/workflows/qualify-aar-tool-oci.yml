@@ -7,6 +7,8 @@ on:
       - "tools/aar_image_parity.py"
       - "tests/test_aar_image_parity.py"
       - ".github/workflows/qualify-aar-tool-oci.yml"
+      - "tools/aar_sdk_stage.py"
+      - "tests/test_aar_private_sdk.py"
   workflow_dispatch:
 
 permissions:
@@ -28,7 +30,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: No-Docker host adapter negative controls
-        run: python -m unittest -v tests.test_aar_image_parity
+        run: python -m unittest -v tests.test_aar_image_parity tests.test_aar_private_sdk
 
   isolated-linux-image:
     strategy:
@@ -144,3 +146,112 @@ jobs:
           path: java-profile.json
           if-no-files-found: ignore
           retention-days: 7
+
+  private-sdk-ephemeral:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+      - name: Stage only observed license-installed SDK subset, byte-verified
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          python3 tools/aar_sdk_stage.py --sdk-root "$sdk" \
+            --output "$RUNNER_TEMP/aar-sdk-input"
+          test ! -d "$RUNNER_TEMP/aar-sdk-input/licenses"
+          echo "SDK_STAGE=PASS;REGISTRY_PUBLICATION=HOLD"
+      - name: Build self-contained *private-use* SDK OCI cell (no registry push)
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="$(python3 -c 'import json;print(json.load(open("containers/aar-tools/toolchain.lock.json"))["base_image"])')"
+          docker build -f containers/aar-tools/Dockerfile --target java-static \
+            --build-arg "BASE_IMAGE=$base" -t aar-java-static:ci .
+          docker build -f containers/aar-tools/Dockerfile.sdk-private \
+            --build-arg BASE_IMAGE=aar-java-static:ci \
+            --build-context "sdk_input=$RUNNER_TEMP/aar-sdk-input" \
+            -t aar-sdk-private:ci .
+          docker image inspect aar-sdk-private:ci --format 'SDK_IMAGE_CONFIG={{.Id}} ARCH={{.Architecture}}'
+          test "$(docker image inspect aar-sdk-private:ci --format '{{.Architecture}}')" = amd64
+      - name: Offline fingerprint of installed native Android SDK tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --pids-limit 128 \
+            --memory 3g --cpus 2 --tmpfs /tmp:rw,nosuid,size=256m \
+            --user 65532:65532 aar-sdk-private:ci \
+            python tools/aar_image_parity.py probe --profile sdk-mounted > sdk-private.json
+          python3 - <<'PY'
+          import json
+          x=json.load(open("sdk-private.json"))
+          assert x["profile"]=="sdk-mounted"
+          assert x["architecture"] in ("x86_64","amd64")
+          for name in ("sdk_aapt2","sdk_dexdump","sdk_apksigner","sdk_d8","sdk_android_35"):
+              assert name in x["tools"]
+          assert x["claims"]["apk_source_recovery"]=="UNKNOWN"
+          print("OCI_PRIVATE_SDK_TOOL_IDENTITY=PASS;LICENSE_REVIEW=PENDING")
+          PY
+      - name: Rebuild source-known Kotlin golden without assuming cached Gradle
+        shell: bash
+        working-directory: goldens/kotlin-dex
+        run: |
+          set -euo pipefail
+          for attempt in 1 2; do
+            if gradle --no-daemon --refresh-dependencies testReleaseUnitTest assembleRelease; then
+              echo "SOURCE_KNOWN_APK_BUILD=PASS;ATTEMPT=$attempt"
+              exit 0
+            fi
+            if [ "$attempt" -eq 1 ]; then sleep 10; fi
+          done
+          echo "SOURCE_KNOWN_APK_BUILD=BLOCKED_DEPENDENCIES"
+          exit 1
+      - name: Execute existing AAR static recovery on authored APK inside SDK OCI
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="$(find goldens/kotlin-dex/app/build/outputs/apk/release -name '*.apk' -type f | head -n1)"
+          test -s "$apk"
+          out="$RUNNER_TEMP/aar-container-recovery"
+          mkdir -p "$out"
+          chmod 0777 "$out"
+          abs="$(realpath "$apk")"
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --pids-limit 128 \
+            --memory 3g --cpus 2 --tmpfs /tmp:rw,nosuid,size=512m \
+            --user 65532:65532 \
+            --mount "type=bind,src=$abs,dst=/inputs/fixture.apk,readonly" \
+            --mount "type=bind,src=$out,dst=/outputs" \
+            aar-sdk-private:ci python tools/recover_apk_static.py /inputs/fixture.apk \
+              --out /outputs/recovered --jadx /opt/jadx/bin/jadx \
+              --dexdump /opt/android-sdk/build-tools/37.0.0/dexdump
+          python3 - "$out/recovered/recovery-manifest.json" <<'PY'
+          import json,sys
+          m=json.load(open(sys.argv[1]))
+          assert m["schema"]=="aar-static-recovery/v0"
+          assert m["dex_recovery"]["root_dex_count"] >= 1
+          assert any(x["producer"]=="dexdump" and x["result"]["returncode"]==0
+                     for x in m["representations"])
+          assert m["status"] in ("PASS","PARTIAL")
+          print("OCI_PRIVATE_SDK_STATIC_STATUS="+m["status"])
+          print("OCI_PRIVATE_SDK_STATIC_PARTIALS="+json.dumps(m.get("partials",[])))
+          print("ORIGINAL_SOURCE_AND_BEHAVIOR=UNKNOWN")
+          PY
+      - name: Destruct ephemeral SDK image and staging
+        if: always()
+        shell: bash
+        run: |
+          docker image rm -f aar-sdk-private:ci >/dev/null 2>&1 || true
+          rm -rf "$RUNNER_TEMP/aar-sdk-input"
+          echo "PRIVATE_SDK_IMAGE_PUSH=NOT_PERFORMED"
+# No SDK image or SDK bytes are uploaded or published by this workflow.
