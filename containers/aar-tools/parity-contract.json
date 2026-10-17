@@ -19,7 +19,7 @@
         "characterizer",
         "java",
         "jadx",
-        "jadx_core_jar",
+        "jadx_library_set",
         "apktool"
       ],
       "prohibits": [
@@ -52,12 +52,12 @@
         "--version"
       ]
     },
-    "jadx_core_jar": {
-      "glob": "/opt/jadx/lib/jadx-core-*.jar"
-    },
     "apktool": {
       "path": "/opt/apktool-3.0.3.jar",
       "sha256": "dbf930b076c6b9be08d57c449cacefc3bdd6b71ebd59b3066fc0e1f5b14f9423"
+    },
+    "jadx_library_set": {
+      "glob": "/opt/jadx/**/*.jar"
     }
   },
   "checks": {
