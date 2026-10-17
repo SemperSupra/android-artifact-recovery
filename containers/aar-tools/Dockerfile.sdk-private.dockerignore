@@ -1,0 +1,3 @@
+# The only payload is supplied via the explicit sdk_input build context.
+# Avoid transferring any checkout/corpus/credentials as the default Docker build context.
+**

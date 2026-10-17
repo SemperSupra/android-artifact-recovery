@@ -1,0 +1,9 @@
+# Only explicitly approved public AAR sources enter Docker build context.
+**
+!tools/
+!tools/**
+!tests/
+!tests/**
+!containers/
+!containers/aar-tools/
+!containers/aar-tools/parity-contract.json

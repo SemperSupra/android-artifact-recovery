@@ -1,0 +1,267 @@
+name: Qualify stateless AAR OCI tool parity
+on:
+  pull_request:
+    paths:
+      - "containers/aar-tools/**"
+      - "tools/aar_container_launch.py"
+      - "tools/aar_image_parity.py"
+      - "tests/test_aar_image_parity.py"
+      - ".github/workflows/qualify-aar-tool-oci.yml"
+      - "tools/aar_sdk_stage.py"
+      - "tests/test_aar_private_sdk.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  portable-host-contract:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: No-Docker host adapter negative controls
+        run: python -m unittest -v tests.test_aar_image_parity tests.test_aar_private_sdk
+
+  isolated-linux-image:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Resolve exact public multiarch base manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="$(python3 -c 'import json; print(json.load(open("containers/aar-tools/toolchain.lock.json"))["base_image"])')"
+          docker pull "$base"
+          case "$base" in *@sha256:*) ;; *) exit 1;; esac
+          echo "BASE_REF=$base" >> "$GITHUB_ENV"
+          echo "RESOLVED_BASE_MANIFEST=$base"
+      - name: Build offline Python capsule for native runner architecture
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build -f containers/aar-tools/Dockerfile \
+            --target python-core --build-arg "BASE_IMAGE=$BASE_REF" \
+            --tag aar-python-core:ci .
+          docker image inspect aar-python-core:ci --format 'IMAGE={{.Id}} ARCH={{.Architecture}} OS={{.Os}}'
+          test "$(docker image inspect aar-python-core:ci --format '{{.Architecture}}')" = "${{ matrix.arch }}"
+      - name: Authoritative synthetic suite runs offline in restricted container
+        shell: bash
+        run: |
+          set -euo pipefail
+          opts=(--rm --network none --read-only --cap-drop ALL
+               --security-opt no-new-privileges --pids-limit 128
+               --memory 2g --cpus 2 --tmpfs /tmp:rw,nosuid,size=256m
+               --user 65532:65532)
+          docker run "${opts[@]}" aar-python-core:ci \
+            python -m unittest -v tests.test_aar_local_case tests.test_characterize_android_artifact tests.test_aar_image_parity
+          docker run "${opts[@]}" aar-python-core:ci \
+            python tools/aar_image_parity.py probe --profile python-core > observed-1.json
+          docker run "${opts[@]}" aar-python-core:ci \
+            python tools/aar_image_parity.py probe --profile python-core > observed-2.json
+          python3 tools/aar_image_parity.py compare --expected observed-1.json --actual observed-2.json
+          echo "OCI_PYTHON_CORE_${{ matrix.arch }}=PASS"
+      - name: Exercise actual host adapter
+        shell: bash
+        run: |
+          python3 tools/aar_container_launch.py probe --image aar-python-core:ci --allow-local-test-tag
+          python3 tools/aar_container_launch.py probe --image aar-python-core:ci --allow-local-test-tag --dry-run
+      - name: Retain public-safe capability fingerprint
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aar-oci-python-${{ matrix.arch }}-${{ github.run_id }}
+          path: observed-1.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  pinned-java-static:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Resolve exact base and build pinned Java static tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="$(python3 -c 'import json; print(json.load(open("containers/aar-tools/toolchain.lock.json"))["base_image"])')"
+          docker pull "$base"
+          docker build -f containers/aar-tools/Dockerfile --target java-static \
+            --build-arg "BASE_IMAGE=$base" --tag aar-java-static:ci .
+          docker image inspect aar-java-static:ci --format 'IMAGE={{.Id}} ARCH={{.Architecture}} SIZE={{.Size}}'
+          test "$(docker image inspect aar-java-static:ci --format '{{.Architecture}}')" = "${{ matrix.arch }}"
+      - name: Verify binary hashes and capability admission offline
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --pids-limit 128 \
+            --memory 3g --cpus 2 --tmpfs /tmp:rw,nosuid,size=256m \
+            --user 65532:65532 aar-java-static:ci \
+            python tools/aar_image_parity.py probe --profile java-static > java-profile.json
+          python3 - <<'PY'
+          import json
+          x=json.load(open("java-profile.json"))
+          assert x["profile"]=="java-static"
+          assert x["tools"]["apktool"]["sha256"]=="dbf930b076c6b9be08d57c449cacefc3bdd6b71ebd59b3066fc0e1f5b14f9423"
+          assert "jadx_library_set" in x["tools"] and "java" in x["tools"]
+          assert x["claims"]["apk_source_recovery"]=="UNKNOWN"
+          print("OCI_JAVA_STATIC_ARTIFACT_IDENTITY=PASS")
+          PY
+      - name: Retain Java and JADX/Apktool artifact fingerprint
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aar-oci-java-${{ matrix.arch }}-${{ github.run_id }}
+          path: java-profile.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  private-sdk-ephemeral:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+      - name: Stage only observed license-installed SDK subset, byte-verified
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          python3 tools/aar_sdk_stage.py --sdk-root "$sdk" \
+            --output "$RUNNER_TEMP/aar-sdk-input"
+          test ! -d "$RUNNER_TEMP/aar-sdk-input/licenses"
+          echo "SDK_STAGE=PASS;REGISTRY_PUBLICATION=HOLD"
+      - name: Build self-contained *private-use* SDK OCI cell (no registry push)
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="$(python3 -c 'import json;print(json.load(open("containers/aar-tools/toolchain.lock.json"))["base_image"])')"
+          docker build -f containers/aar-tools/Dockerfile --target java-static \
+            --build-arg "BASE_IMAGE=$base" -t aar-java-static:ci .
+          docker build -f containers/aar-tools/Dockerfile.sdk-private \
+            --build-arg BASE_IMAGE=aar-java-static:ci \
+            --build-context "sdk_input=$RUNNER_TEMP/aar-sdk-input" \
+            -t aar-sdk-private:ci .
+          docker image inspect aar-sdk-private:ci --format 'SDK_IMAGE_CONFIG={{.Id}} ARCH={{.Architecture}}'
+          test "$(docker image inspect aar-sdk-private:ci --format '{{.Architecture}}')" = amd64
+      - name: Offline fingerprint of installed native Android SDK tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --pids-limit 128 \
+            --memory 3g --cpus 2 --tmpfs /tmp:rw,nosuid,size=256m \
+            --user 65532:65532 aar-sdk-private:ci \
+            python tools/aar_image_parity.py probe --profile sdk-mounted > sdk-private.json
+          python3 - <<'PY'
+          import json
+          x=json.load(open("sdk-private.json"))
+          assert x["profile"]=="sdk-mounted"
+          assert x["architecture"] in ("x86_64","amd64")
+          for name in ("sdk_aapt2","sdk_dexdump","sdk_apksigner","sdk_d8","sdk_android_35"):
+              assert name in x["tools"]
+          assert x["claims"]["apk_source_recovery"]=="UNKNOWN"
+          print("OCI_PRIVATE_SDK_TOOL_IDENTITY=PASS;LICENSE_REVIEW=PENDING")
+          PY
+      - name: Rebuild source-known Kotlin golden without assuming cached Gradle
+        shell: bash
+        working-directory: goldens/kotlin-dex
+        run: |
+          set -euo pipefail
+          for attempt in 1 2; do
+            if gradle --no-daemon --refresh-dependencies testReleaseUnitTest assembleRelease; then
+              echo "SOURCE_KNOWN_APK_BUILD=PASS;ATTEMPT=$attempt"
+              exit 0
+            fi
+            if [ "$attempt" -eq 1 ]; then sleep 10; fi
+          done
+          echo "SOURCE_KNOWN_APK_BUILD=BLOCKED_DEPENDENCIES"
+          exit 1
+      - name: Execute existing AAR static recovery on authored APK inside SDK OCI
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="$(find goldens/kotlin-dex/app/build/outputs/apk/release -name '*.apk' -type f | head -n1)"
+          test -s "$apk"
+          out="$RUNNER_TEMP/aar-container-recovery"
+          mkdir -p "$out"
+          chmod 0777 "$out"
+          abs="$(realpath "$apk")"
+          set +e
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --pids-limit 128 \
+            --memory 3g --cpus 2 --tmpfs /tmp:rw,nosuid,size=512m \
+            --user 65532:65532 \
+            --mount "type=bind,src=$abs,dst=/inputs/fixture.apk,readonly" \
+            --mount "type=bind,src=$out,dst=/outputs" \
+            aar-sdk-private:ci python tools/recover_apk_static.py /inputs/fixture.apk \
+              --out /outputs/recovered --jadx /opt/jadx/bin/jadx \
+              --dexdump /opt/android-sdk/build-tools/37.0.0/dexdump
+          producer_rc=$?
+          set -e
+          echo "STATIC_PRODUCER_EXIT=$producer_rc"
+          python3 - "$out/recovered/recovery-manifest.json" <<'PY'
+          import json,sys
+          m=json.load(open(sys.argv[1]))
+          assert m["schema"]=="aar-static-recovery/v0"
+          assert m["dex_recovery"]["root_dex_count"] >= 1
+          assert any(x["producer"]=="dexdump" and x["result"]["returncode"]==0
+                     for x in m["representations"])
+          for rep in m["representations"]:
+              if rep["producer"]=="jadx":
+                  r=rep["result"]
+                  print("JADX_EXIT="+str(r["returncode"]))
+                  print("JADX_STDERR="+str(r.get("stderr",""))[:7000])
+                  print("JADX_STDOUT="+str(r.get("stdout",""))[:3500])
+          assert m["status"] in ("PASS","PARTIAL")
+          print("OCI_PRIVATE_SDK_STATIC_STATUS="+m["status"])
+          print("OCI_PRIVATE_SDK_STATIC_PARTIALS="+json.dumps(m.get("partials",[])))
+          print("ORIGINAL_SOURCE_AND_BEHAVIOR=UNKNOWN")
+          PY
+      - name: Destruct ephemeral SDK image and staging
+        if: always()
+        shell: bash
+        run: |
+          docker image rm -f aar-sdk-private:ci >/dev/null 2>&1 || true
+          rm -rf "$RUNNER_TEMP/aar-sdk-input"
+          echo "PRIVATE_SDK_IMAGE_PUSH=NOT_PERFORMED"
+# No SDK image or SDK bytes are uploaded or published by this workflow.
