@@ -1,0 +1,28 @@
+{
+  "schema": "aar-tool-oci-build-lock/v0",
+  "base_image": "docker.io/library/python@sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3a1509accc92a4e24a07258",
+  "supported_architectures": [
+    "amd64",
+    "arm64"
+  ],
+  "components": {
+    "python-core": {
+      "profile": "python-core",
+      "source": "AAR public checkout"
+    },
+    "java-static": {
+      "profile": "java-static",
+      "source": "pinned upstream binary releases",
+      "jadx_version": "1.5.6",
+      "jadx_zip_sha256": "545ea2be9c242511bc145755cf4bda2485ade42966e096f8b4d3da2a230e8974",
+      "apktool_version": "3.0.3",
+      "apktool_jar_sha256": "dbf930b076c6b9be08d57c449cacefc3bdd6b71ebd59b3066fc0e1f5b14f9423"
+    }
+  },
+  "limitations": [
+    "This is a build-input lock, not a registry publication or Docker runtime admission.",
+    "Build-time apt package closures can vary; exact cross-host parity requires identical admitted OCI digest.",
+    "Native Android SDK, Ghidra and physical Android runtime are not in this profile.",
+    "No proprietary APK corpora or inference model weights are packaged."
+  ]
+}
