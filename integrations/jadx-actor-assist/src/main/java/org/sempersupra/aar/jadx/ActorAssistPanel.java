@@ -53,6 +53,8 @@ public final class ActorAssistPanel extends JDialog {
         AssistProfile.Provider p=(AssistProfile.Provider)provider.getSelectedItem();
         model.setText(p==AssistProfile.Provider.OPENROUTER_FREE ?
             System.getenv().getOrDefault("AAR_ASSIST_OPENROUTER_FREE_MODEL","") :
+            p==AssistProfile.Provider.OPENROUTER_MANAGED ?
+            System.getenv().getOrDefault("AAR_ASSIST_OPENROUTER_MANAGED_MODEL","") :
             System.getenv().getOrDefault("AAR_ASSIST_LOCAL_MODEL","qwen3.6:35b-a3b"));
     }
     private void request() {
@@ -66,11 +68,14 @@ public final class ActorAssistPanel extends JDialog {
             output.setText("BLOCKED: "+ex.getMessage()+"\nNo inference executed.");
             return;
         }
-        boolean external=profile.provider == AssistProfile.Provider.OPENROUTER_FREE;
+        boolean external=profile.provider == AssistProfile.Provider.OPENROUTER_FREE
+            || profile.provider == AssistProfile.Provider.OPENROUTER_MANAGED;
         if (external) {
             int choice=JOptionPane.showConfirmDialog(this,
                 "The selected decompiled source ("+source.length()+
                 " characters) will be transmitted to OpenRouter and an upstream model provider.\n"+
+                (profile.provider == AssistProfile.Provider.OPENROUTER_MANAGED ?
+                    "METERED INFERENCE: OpenRouter credits or a BYOK provider account may be charged.\n" : "")+
                 "Do not send private APKs, credentials, sensitive content or unauthorized code.\n"+
                 "Continue with exact model "+profile.model+"?",
                 "EXTERNAL SOURCE DISCLOSURE — approve this request?",JOptionPane.YES_NO_OPTION,

@@ -29,30 +29,50 @@ public final class AssistGateway {
     private final HttpClient client;
     private final Supplier<String> externalKey;
     private final Supplier<String> localGatewayKey;
+    private final Supplier<Boolean> meteredEnabled;
+    private final Supplier<String> routingProvider;
     private final Gson gson = new Gson();
     public AssistGateway() {
         this(HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(8))
             .followRedirects(HttpClient.Redirect.NEVER).build(),
             () -> System.getenv("OPENROUTER_API_KEY"),
-            () -> System.getenv("AAR_ASSIST_LOCAL_GATEWAY_KEY"));
+            () -> System.getenv("AAR_ASSIST_LOCAL_GATEWAY_KEY"),
+            () -> "true".equals(System.getenv("AAR_ASSIST_ALLOW_METERED_OPENROUTER")),
+            () -> System.getenv("AAR_ASSIST_OPENROUTER_PROVIDER"));
     }
     public AssistGateway(HttpClient client, Supplier<String> externalKey) {
         this(client, externalKey, () -> null);
     }
     public AssistGateway(HttpClient client, Supplier<String> externalKey,
                          Supplier<String> localGatewayKey) {
+        this(client,externalKey,localGatewayKey,()->false,()->null);
+    }
+    public AssistGateway(HttpClient client,Supplier<String> externalKey,
+                         Supplier<String> localGatewayKey,Supplier<Boolean> meteredEnabled,
+                         Supplier<String> routingProvider) {
         this.client=Objects.requireNonNull(client);
         this.externalKey=Objects.requireNonNull(externalKey);
         this.localGatewayKey=Objects.requireNonNull(localGatewayKey);
+        this.meteredEnabled=Objects.requireNonNull(meteredEnabled);
+        this.routingProvider=Objects.requireNonNull(routingProvider);
     }
     /** Consent is checked at transport boundary, not only in GUI. */
     public HttpRequest build(AssistProfile profile, EvidencePrompt.Packet packet,
                              boolean externalDisclosureApproved) {
         Objects.requireNonNull(profile);
         Objects.requireNonNull(packet);
-        boolean external = profile.provider == AssistProfile.Provider.OPENROUTER_FREE;
+        boolean external = profile.provider == AssistProfile.Provider.OPENROUTER_FREE
+            || profile.provider == AssistProfile.Provider.OPENROUTER_MANAGED;
         if (external && !externalDisclosureApproved) {
             throw new SecurityException("External source disclosure requires explicit per-request approval");
+        }
+        String lockedProvider=null;
+        if (profile.provider == AssistProfile.Provider.OPENROUTER_MANAGED) {
+            if (!Boolean.TRUE.equals(meteredEnabled.get()))
+                throw new SecurityException("Metered OpenRouter disabled");
+            lockedProvider=routingProvider.get();
+            if (lockedProvider==null || !lockedProvider.matches("[A-Za-z0-9_. -]{2,64}"))
+                throw new SecurityException("Metered route requires an explicit provider");
         }
         JsonObject json=new JsonObject();
         json.addProperty("model",profile.model);
@@ -69,6 +89,16 @@ public final class AssistGateway {
             JsonObject usr=new JsonObject(); usr.addProperty("role","user"); usr.addProperty("content",packet.user);
             messages.add(sys);messages.add(usr);json.add("messages",messages);
             json.addProperty("temperature",profile.temperature);
+            if (external) {
+                json.addProperty("max_tokens",1024);
+                JsonObject routing=new JsonObject();
+                routing.addProperty("allow_fallbacks",false);
+                routing.addProperty("data_collection","deny");
+                if (lockedProvider!=null) {
+                    JsonArray only=new JsonArray();only.add(lockedProvider);routing.add("only",only);
+                }
+                json.add("provider",routing);
+            }
             if (external && !"none".equals(profile.reasoningEffort)) {
                 JsonObject reasoning=new JsonObject();
                 reasoning.addProperty("effort",profile.reasoningEffort);

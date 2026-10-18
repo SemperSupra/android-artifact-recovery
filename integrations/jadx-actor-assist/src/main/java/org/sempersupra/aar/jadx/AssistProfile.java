@@ -5,7 +5,7 @@ import java.util.Objects;
 
 /** Explicit provider/model binding. External inference is never implicit. */
 public final class AssistProfile {
-    public enum Provider { OLLAMA_LOCAL, OPENAI_LOCAL, OPENROUTER_FREE }
+    public enum Provider { OLLAMA_LOCAL, OPENAI_LOCAL, OPENROUTER_FREE, OPENROUTER_MANAGED }
     public enum Role { DETERMINISTIC_CANDIDATE, REASONING_CANDIDATE }
     public final Provider provider;
     public final Role role;
@@ -38,11 +38,13 @@ public final class AssistProfile {
             endpoint.getQuery() != null || host == null || endpoint.getPort() == 0) {
             throw new IllegalArgumentException("Endpoint may not contain credentials, query or fragment");
         }
-        if (provider == Provider.OPENROUTER_FREE) {
-            if (!URI.create("https://openrouter.ai/api/v1/chat/completions").equals(endpoint)
-                || !(model.endsWith(":free") || "openrouter/free".equals(model))) {
-                throw new IllegalArgumentException("OpenRouter permits only pinned HTTPS endpoint and :free model");
-            }
+        if (provider == Provider.OPENROUTER_FREE || provider == Provider.OPENROUTER_MANAGED) {
+            if (!URI.create("https://openrouter.ai/api/v1/chat/completions").equals(endpoint))
+                throw new IllegalArgumentException("Use the official OpenRouter HTTPS endpoint");
+            boolean free = model.endsWith(":free") || "openrouter/free".equals(model);
+            if ((provider == Provider.OPENROUTER_FREE && !free)
+                || (provider == Provider.OPENROUTER_MANAGED && free))
+                throw new IllegalArgumentException("Free and metered OpenRouter routes may not mix");
         } else {
             String h = host.toLowerCase(java.util.Locale.ROOT);
             boolean loopback = h.equals("localhost") || h.equals("127.0.0.1") || h.equals("::1");
@@ -64,7 +66,7 @@ public final class AssistProfile {
     }
 
     public static AssistProfile fromSelection(Provider provider, Role role, String model) {
-        String endpoint = provider == Provider.OPENROUTER_FREE
+        String endpoint = (provider == Provider.OPENROUTER_FREE || provider == Provider.OPENROUTER_MANAGED)
             ? "https://openrouter.ai/api/v1/chat/completions"
             : provider == Provider.OLLAMA_LOCAL
                 ? System.getenv().getOrDefault("AAR_ASSIST_OLLAMA_URL", "http://127.0.0.1:11434/api/generate")
