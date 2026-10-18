@@ -100,7 +100,7 @@ public final class ActorAssistPanel extends JDialog {
                 } else {
                     output.setText("UNVERIFIED MODEL HYPOTHESES\nRequested model "+reply.model+
                         "\nProvider-reported model "+reply.observedModel+
-                        "\nActual BYOK account route: UNKNOWN"++
+                        "\nActual BYOK account route: UNKNOWN"+
                         "\nCode SHA256 "+reply.codeSha256+
                         "\nPrompt "+reply.promptVersion+
                         "\nMust independently confirm every claim using DEX/JVM/behavior oracles.\n\n"+
