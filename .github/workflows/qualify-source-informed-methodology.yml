@@ -4,6 +4,7 @@ on:
     paths:
       - '.github/workflows/qualify-source-informed-methodology.yml'
       - 'tools/qualify_method_comparison.py'
+      - 'tools/inventory_ndk_references.py'
       - 'tests/test_qualify_method_comparison.py'
       - 'docs/recovery/source-informed-methodology-rdte-2026-10-13.md'
   workflow_dispatch:
@@ -27,3 +28,28 @@ jobs:
         run: |
           echo "Public-safe source-known fixtures and stdlib tests only."
           echo "No private APK, secrets, authenticated state, or proprietary data."
+
+  ndk-arm64-inventory:
+    name: Android NDK ARM64 source/library census (one-shot)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Inventory preinstalled Android NDK archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/inventory_ndk_references.py --output "$RUNNER_TEMP/ndk-arm64-inventory.json"
+      - name: Retain public-safe NDK metadata only
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ndk-arm64-census-${{ github.run_id }}
+          path: ${{ runner.temp }}/ndk-arm64-inventory.json
+          if-no-files-found: ignore
+          retention-days: 30
+
