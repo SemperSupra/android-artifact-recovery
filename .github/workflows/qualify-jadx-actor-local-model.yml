@@ -1,12 +1,7 @@
 name: Qualify source-known JADX actor model on free GHA CPU
 on:
-  pull_request:
-    paths:
-      - "integrations/jadx-actor-assist/interviews/**"
-      - "integrations/jadx-actor-assist/src/test/java/org/sempersupra/aar/jadx/ActorAssistInterviewCli.java"
-      - "integrations/jadx-actor-assist/src/main/java/org/sempersupra/aar/jadx/AssistGateway.java"
-      - ".github/workflows/qualify-jadx-actor-local-model.yml"
   workflow_dispatch:
+# Manual/authorized CI rerun only: avoid downloading large model weights on each PR edit.
 permissions:
   contents: read
 jobs:
