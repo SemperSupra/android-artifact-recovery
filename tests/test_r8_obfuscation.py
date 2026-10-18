@@ -22,7 +22,7 @@ class ObfuscationCalibrationTests(unittest.TestCase):
             result=M.read_mapping(f)
             self.assertTrue(result["known_oracle_class_renamed"])
             self.assertEqual(result["renamed_classes"],1)
-            self.assertNotIn("a",str(result))  # no mapping aliases in aggregate stats
+            self.assertEqual(set(result),{"mapping_classes","renamed_classes","known_oracle_class_renamed"})
 
     def test_reject_no_actual_obfuscation(self):
         with tempfile.TemporaryDirectory() as td:
