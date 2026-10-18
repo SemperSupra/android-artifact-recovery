@@ -1,0 +1,41 @@
+name: Qualify AAR JADX actor assistant
+on:
+  pull_request:
+    paths:
+      - "integrations/jadx-actor-assist/**"
+      - ".github/workflows/qualify-jadx-actor-assist.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  compile-and-offline-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+      - name: Compile and offline-test actual JADX plugin + provider protocols
+        working-directory: integrations/jadx-actor-assist
+        run: |
+          set -euo pipefail
+          gradle --no-daemon --stacktrace clean test shadowJar
+          test -s build/libs/jadx-actor-assist-0.1.0-experimental.jar
+          jar tf build/libs/jadx-actor-assist-0.1.0-experimental.jar | grep -q 'META-INF/services/jadx.api.plugins.JadxPlugin'
+          jar tf build/libs/jadx-actor-assist-0.1.0-experimental.jar | grep -q 'org/sempersupra/aar/jadx/AssistGateway.class'
+          sha256sum build/libs/jadx-actor-assist-0.1.0-experimental.jar
+          echo "JADX_ACTOR_ASSIST_BUILD_AND_OFFLINE_PROTOCOLS=PASS;LIVE_INFERENCE=NOT_RUN"
+      - name: Publish public-source test JAR for operator qualification
+        uses: actions/upload-artifact@v4
+        with:
+          name: jadx-actor-assist-candidate
+          path: integrations/jadx-actor-assist/build/libs/jadx-actor-assist-0.1.0-experimental.jar
+          if-no-files-found: error
+          retention-days: 7
