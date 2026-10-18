@@ -8,6 +8,7 @@ from unittest.mock import patch
 ORACLE={"abi":"x86_64","elf_machine":62,"elf_sha256":"example",
         "jni_address":4096,"helper_truth":{"aar_fold":4112,"aar_affine":4128}}
 PROBE="""AAR_A3_ABI=x86_64
+AAR_A3_IMAGE_BASE=0
 AAR_A3_JNI_ENTRY=1000
 AAR_A3_CALLEE=1010|25|true
 AAR_A3_CALLEE=1020|21|true
