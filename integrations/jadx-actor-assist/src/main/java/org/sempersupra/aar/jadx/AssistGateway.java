@@ -82,6 +82,8 @@ public final class AssistGateway {
             json.addProperty("system",packet.system);
             JsonObject options = new JsonObject();
             options.addProperty("temperature",profile.temperature);
+            options.addProperty("num_predict",512);
+            json.addProperty("think",profile.role == AssistProfile.Role.REASONING_CANDIDATE);
             json.add("options", options);
         } else {
             JsonArray messages=new JsonArray();
@@ -146,6 +148,11 @@ public final class AssistGateway {
                     JsonObject body=JsonParser.parseString(response.body()).getAsJsonObject();
                     String value;
                     if (profile.provider == AssistProfile.Provider.OLLAMA_LOCAL) {
+                        if (!body.has("done") || !body.get("done").getAsBoolean())
+                            throw new IllegalStateException("INCOMPLETE_OLLAMA_NOT_DONE");
+                        if (body.has("done_reason") && !body.get("done_reason").isJsonNull()
+                            && !"stop".equals(body.get("done_reason").getAsString()))
+                            throw new IllegalStateException("INCOMPLETE_OLLAMA_STOP_REASON");
                         value=body.get("response").getAsString();
                     } else {
                         JsonArray choices=body.getAsJsonArray("choices");

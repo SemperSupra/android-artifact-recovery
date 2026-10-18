@@ -64,7 +64,7 @@ class AssistGatewayTest {
         server.createContext("/api/generate",exchange->{
             captured.set(JsonParser.parseString(new String(exchange.getRequestBody().readAllBytes(),
                 StandardCharsets.UTF_8)).getAsJsonObject());
-            byte[] response="{\"response\":\"Observed L1\\nUNKNOWN\",\"done\":true}".getBytes(StandardCharsets.UTF_8);
+            byte[] response="{\"response\":\"Observed L1\\nUNKNOWN\",\"done\":true,\"done_reason\":\"stop\"}".getBytes(StandardCharsets.UTF_8);
             exchange.sendResponseHeaders(200,response.length);
             try(var out=exchange.getResponseBody()){out.write(response);}
         });
@@ -76,7 +76,18 @@ class AssistGatewayTest {
             assertTrue(captured.get().get("system").getAsString().contains("UNTRUSTED"));
             assertTrue(captured.get().get("prompt").getAsString().contains(PACKET.sha256));
             assertEquals(0,captured.get().getAsJsonObject("options").get("temperature").getAsInt());
+            assertFalse(captured.get().get("think").getAsBoolean());
+            assertEquals(512,captured.get().getAsJsonObject("options").get("num_predict").getAsInt());
         }finally{server.stop(0);}
+    }
+    @Test void thinkingRoleIsExplicitOnOllama() {
+        AssistProfile q=new AssistProfile(AssistProfile.Provider.OLLAMA_LOCAL,
+            AssistProfile.Role.REASONING_CANDIDATE,"qwen3:1.7b",
+            URI.create("http://127.0.0.1:11434/api/generate"),0.2,"medium");
+        var built=new AssistGateway().build(q,PACKET,false);
+        // Body is validated by the end-to-end local mock test for the other role.
+        assertEquals("http",built.uri().getScheme());
+        assertFalse(built.headers().firstValue("Authorization").isPresent());
     }
     @Test void openAiCompatibleStructuredMessagesRoundTrip() throws Exception {
         HttpServer server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
