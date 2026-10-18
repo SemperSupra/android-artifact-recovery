@@ -23,6 +23,10 @@ TARGET=Path("org/sempersupra/aar/golden/kotlin/GoldenRecordFingerprint.java")
 def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
+def rejected_rule_name(detail: str) -> str:
+    first=detail.split(":",1)[0]
+    return first if re.fullmatch(r"jadx\.[A-Za-z0-9_.-]+",first) else "UNKNOWN_RULE"
+
 def stage(raw: Path, out: Path) -> dict:
     if out.exists():
         raise ValueError("do not overwrite intervention experiment")
@@ -53,9 +57,7 @@ def stage(raw: Path, out: Path) -> dict:
             records[label]={"state":"UNSUPPORTED_PATTERN",
                             "repair_applied":False,"raw_sha256":before,
                             "error_category":"EXPECTED_PATTERN_MISMATCH",
-                            "first_rejected_rule":(re.match(r"^(jadx\\.[A-Za-z0-9_.-]+):",str(error)).group(1)
-                                                   if re.match(r"^(jadx\\.[A-Za-z0-9_.-]+):",str(error))
-                                                   else "UNKNOWN_RULE"),
+                            "first_rejected_rule":rejected_rule_name(str(error)),
                             "semantic_evidence":"UNKNOWN"}
             continue
         # The reference pattern count is fixed in the *existing* repair,

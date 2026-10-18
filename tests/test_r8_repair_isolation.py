@@ -12,6 +12,13 @@ class ScopedRepairTests(unittest.TestCase):
         self.assertNotIn("rename-only",M.ELIGIBLE)
         self.assertNotIn("full-r8",M.ELIGIBLE)
 
+    def test_rule_category_is_stable_and_no_error_source_leaks(self):
+        self.assertEqual(
+            M.rejected_rule_name("jadx.kotlin.duplicate-data-class-getters: private data /home/user/file"),
+            "jadx.kotlin.duplicate-data-class-getters")
+        self.assertEqual(M.rejected_rule_name("strange arbitrary content: /etc/passwd"),
+                         "UNKNOWN_RULE")
+
     def test_repair_requires_existing_raw_inputs(self):
         import tempfile
         with tempfile.TemporaryDirectory() as td:
