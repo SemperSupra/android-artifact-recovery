@@ -40,7 +40,7 @@ public final class AssistProfile {
         }
         if (provider == Provider.OPENROUTER_FREE) {
             if (!URI.create("https://openrouter.ai/api/v1/chat/completions").equals(endpoint)
-                || !model.endsWith(":free")) {
+                || !(model.endsWith(":free") || "openrouter/free".equals(model))) {
                 throw new IllegalArgumentException("OpenRouter permits only pinned HTTPS endpoint and :free model");
             }
         } else {
