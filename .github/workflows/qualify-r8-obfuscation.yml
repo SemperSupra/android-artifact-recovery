@@ -8,6 +8,8 @@ on:
       - "tests/test_r8_factor_matrix.py"
       - "tests/test_r8_behavior_oracle.py"
       - "tools/experiment_r8_behavior_oracle.py"
+      - "tools/experiment_r8_repair_isolation.py"
+      - "tests/test_r8_repair_isolation.py"
       - "tests/test_r8_obfuscation.py"
       - "goldens/kotlin-dex/app/build.gradle.kts"
       - "goldens/kotlin-dex/app/aar-obfuscation-rules.pro"
@@ -30,7 +32,7 @@ jobs:
         with:
           gradle-version: '8.11.1'
       - name: Validate blinded mapping triage negative controls
-        run: python3 -m unittest -v tests.test_r8_obfuscation tests.test_r8_factor_matrix tests.test_r8_behavior_oracle
+        run: python3 -m unittest -v tests.test_r8_obfuscation tests.test_r8_factor_matrix tests.test_r8_behavior_oracle tests.test_r8_repair_isolation
       - name: Build unchanged baseline and separately R8-minified source-known fixture
         shell: bash
         working-directory: goldens/kotlin-dex
@@ -139,6 +141,59 @@ jobs:
           assert x["generalized_recovery_qualified"] is False
           print("R8_RAW_JAVA_BEHAVIOR_SCORER=PASS;NO_GENERALIZED_RECOVERY_CLAIM")
           PY
+      - name: Test existing bounded Kotlin repair as separately identified intervention
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/experiment_r8_repair_isolation.py \
+            --raw out/r8-factor-sequence --out out/r8-repair-intervention
+          klass="$(find goldens/kotlin-dex/app/build -type f -name GoldenRecordFingerprint.class -print -quit)"
+          test -n "$klass"
+          root="$(python3 - "$klass" <<'PY'
+          import pathlib,sys
+          print(pathlib.Path(sys.argv[1]).resolve().parents[5])
+          PY
+          )"
+          stdlib="$(find "$HOME/.gradle/caches/modules-2/files-2.1/org.jetbrains.kotlin/kotlin-stdlib" -name 'kotlin-stdlib-2.0.21.jar' -print -quit)"
+          annotations="$(find "$HOME/.gradle/caches/modules-2/files-2.1/org.jetbrains/annotations" -name '*.jar' ! -name '*sources*' -print -quit || true)"
+          test -d "$root" && test -s "$stdlib"
+          python3 tools/experiment_r8_behavior_oracle.py \
+            --original-classes "$root" --kotlin-stdlib "$stdlib" \
+            --annotations "$annotations" \
+            --harness tests/fixtures/GoldenFingerprintMatrixHarness.java \
+            --recovered-root out/r8-repair-intervention/sources \
+            --out out/r8-repaired-behavior
+          python3 - <<'PY'
+          import json
+          raw=json.load(open("out/r8-behavior/result.json"))
+          staged=json.load(open("out/r8-repair-intervention/intervention.json"))
+          new=json.load(open("out/r8-repaired-behavior/result.json"))
+          assert len(staged["profiles"])==5
+          assert staged["mutation_of_raw_jadx"] is False
+          assert new["generalized_recovery_qualified"] is False
+          for k in ("release","shrink-only","shrink-optimize"):
+              a=raw["methods"][k]
+              b=new["methods"][k]
+              change=staged["profiles"][k]
+              print("R8_RAW_VS_REPAIR",
+                    json.dumps({"variant":k,"repair":change["state"],
+                                "raw_status":a["state"],"candidate_status":b["state"],
+                                "matched":b["matched"],"unknown":b["unknown"]},
+                               sort_keys=True))
+              if b["state"]=="MATCH_10_VECTORS":
+                  assert change["repair_applied"] is True
+          print("R8_REPAIR_ISOLATION=PASS;GENERALIZATION=UNKNOWN")
+          PY
+      - name: Retain scoped repair and behavior delta receipts only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aar-r8-bounded-repair-delta
+          path: |
+            out/r8-repair-intervention/intervention.json
+            out/r8-repaired-behavior/result.json
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Retain scored ten-vector public synthetic evidence
         if: always()
         uses: actions/upload-artifact@v4
