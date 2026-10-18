@@ -41,9 +41,9 @@ def verdict(raw,source,expected):
         result["status"]="INVALID_SCHEMA"
         return result
     ev=val["evidence"]
-    valid=(isinstance(ev,list) and 2<=len(ev)<=8 and len(set(ev))==len(ev) and
-           all(isinstance(e,str) and e in {f"L{i+1}" for i in range(len(source.splitlines()))}
-               for e in ev))
+    valid=(isinstance(ev,list) and 2<=len(ev)<=8 and
+           all(isinstance(e,str) for e in ev) and len(set(ev))==len(ev) and
+           all(e in {f"L{i+1}" for i in range(len(source.splitlines()))} for e in ev))
     result["scored"]=True
     result["correct_output"]=val["runtime_output"]==expected
     result["correct_signature"]=val["selected_signature"]=="a(Object)"
