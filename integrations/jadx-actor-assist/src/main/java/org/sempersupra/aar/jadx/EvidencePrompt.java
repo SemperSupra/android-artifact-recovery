@@ -6,7 +6,7 @@ import java.security.NoSuchAlgorithmException;
 
 /** Hypotheses, not source reconstruction certificates. Code is untrusted data. */
 public final class EvidencePrompt {
-    public static final String VERSION = "aar-jadx-prompt-v1";
+    public static final String VERSION = "aar-jadx-prompt-v2";
     public static final int MAX_CONTEXT_CHARS = 12000;
     public static final String SYSTEM =
         "You are a reverse-engineering hypothesis generator, not an oracle. " +
@@ -37,12 +37,19 @@ public final class EvidencePrompt {
             throw new IllegalArgumentException("Question too large");
         }
         String hash = digest(code);
+        StringBuilder numbered=new StringBuilder();
+        String[] sourceLines=code.replace("\r\n","\n").split("\n",-1);
+        for (int i=0;i<sourceLines.length;i++) {
+            String safe=sourceLines[i].replace("CODE_END_UNTRUSTED_DATA","LITERAL_CODE_END_MARKER");
+            numbered.append("L").append(i+1).append(": ").append(safe).append("\n");
+        }
         String user = "PROMPT_VERSION: "+VERSION+"\nMODE: "+mode+
             "\nDECOMPILED_CODE_SHA256: "+hash+
             "\nQUESTION: "+question.trim()+
-            "\nCODE_START_UNTRUSTED_DATA\n"+code+
-            "\nCODE_END_UNTRUSTED_DATA\n"+
-            "Respond with evidence and a falsifiable next probe; use UNKNOWN if needed.";
+            "\nCODE_START_UNTRUSTED_DATA\n"+numbered+
+            "CODE_END_UNTRUSTED_DATA\n"+
+            "Cite L<number> evidence positions for each observation, separate source-known "+
+            "facts from hypotheses, and give a falsifiable next probe. Use UNKNOWN where needed.";
         return new Packet(SYSTEM,user,hash);
     }
     static String digest(String text) {

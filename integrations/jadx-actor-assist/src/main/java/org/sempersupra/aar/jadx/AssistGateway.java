@@ -19,9 +19,10 @@ import java.util.function.Supplier;
 /** Bounded request transport; no arbitrary tools, fallback models or secret logging. */
 public final class AssistGateway {
     public static final class Reply {
-        public final String text, model, codeSha256, promptVersion;
-        public Reply(String text, String model, String codeSha256) {
-            this.text=text; this.model=model; this.codeSha256=codeSha256;
+        public final String text, model, observedModel, codeSha256, promptVersion;
+        public Reply(String text, String model, String observedModel, String codeSha256) {
+            this.text=text; this.model=model; this.observedModel=observedModel;
+            this.codeSha256=codeSha256;
             this.promptVersion=EvidencePrompt.VERSION;
         }
     }
@@ -126,7 +127,10 @@ public final class AssistGateway {
                     }
                     if (value.isBlank() || value.length()>50000)
                         throw new IllegalStateException("INCOMPLETE_EMPTY_OR_OVERSIZED_RESPONSE");
-                    return new Reply(value,profile.model,packet.sha256);
+                    String observed = body.has("model") && !body.get("model").isJsonNull()
+                        ? body.get("model").getAsString() : "UNKNOWN_MODEL_ID";
+                    if (observed.length() > 180) observed="UNTRUSTED_MODEL_ID_TOO_LONG";
+                    return new Reply(value,profile.model,observed,packet.sha256);
                 } catch (IllegalStateException e) {
                     throw e;
                 } catch (RuntimeException e) {

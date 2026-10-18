@@ -16,6 +16,11 @@ class AssistProfilesTest {
             AssistProfile.Provider.OPENROUTER_FREE, AssistProfile.Role.REASONING_CANDIDATE,
             "good/model:free",URI.create("http://openrouter.ai/api/v1/chat/completions"),0.2,"medium"));
     }
+    @Test void admitsNamedFreeRouterButNotArbitraryModel() {
+        assertDoesNotThrow(() -> new AssistProfile(
+            AssistProfile.Provider.OPENROUTER_FREE, AssistProfile.Role.REASONING_CANDIDATE,
+            "openrouter/free",URI.create("https://openrouter.ai/api/v1/chat/completions"),0.2,"medium"));
+    }
     @Test void permitsLocalInterfacesButNotPublicHttp() {
         assertDoesNotThrow(() -> new AssistProfile(AssistProfile.Provider.OPENAI_LOCAL,
             AssistProfile.Role.DETERMINISTIC_CANDIDATE,"qwen",URI.create("http://127.0.0.1:8080/v1/chat/completions"),0,"none"));

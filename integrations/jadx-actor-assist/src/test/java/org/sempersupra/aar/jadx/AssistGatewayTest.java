@@ -31,6 +31,15 @@ class AssistGatewayTest {
         assertEquals("https",req.uri().getScheme());
         assertEquals("Bearer fake-unit-test-only",req.headers().firstValue("Authorization").orElseThrow());
     }
+    @Test void scopedLocalGatewayCredentialIsOptionalAndNeverForOllama() {
+        AssistGateway gw=new AssistGateway(HttpClient.newHttpClient(),()->"external",
+            ()->"local-scoped-test-key");
+        AssistProfile local=local(AssistProfile.Provider.OPENAI_LOCAL,12345);
+        assertEquals("Bearer local-scoped-test-key",
+            gw.build(local,PACKET,false).headers().firstValue("Authorization").orElseThrow());
+        AssistProfile ollama=local(AssistProfile.Provider.OLLAMA_LOCAL,12345);
+        assertFalse(gw.build(ollama,PACKET,false).headers().firstValue("Authorization").isPresent());
+    }
     @Test void localOllamaJsonRoundTrip() throws Exception {
         HttpServer server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
         AtomicReference<JsonObject> captured=new AtomicReference<>();
