@@ -46,6 +46,7 @@ def produce(root:Path)->None:
     cpp.write_text(CPP)
     native=root/"aar_a2_native.so"
     cmd([str(compiler),"--target=x86_64-linux-android35",
+         "-nostdlib++", # This plain-C ABI JNI fixture requires no libc++ runtime.
          "-O1","-fPIC","-fvisibility=hidden","-fno-exceptions",
          "-ffunction-sections","-fdata-sections","-shared",
          "-Wl,--gc-sections","-Wl,--build-id=none",
@@ -56,6 +57,12 @@ def produce(root:Path)->None:
     symbols=cmd([str(bindir/"llvm-nm"),"-D","--defined-only",str(native)])
     if JNI not in symbols or "aar_fold" in symbols or "aar_affine" in symbols:
         raise ValueError("JNI export identity or helper visibility failure")
+    dependencies=cmd([str(bindir/"llvm-readelf"),"-d",str(native)],30)
+    required_libs=sorted(set(re.findall(r"Shared library: \[([^]]+)\]",dependencies)))
+    if "libc++_shared.so" in required_libs:
+        raise ValueError("unpackaged C++ runtime dependency remains")
+    if not "libc.so" in required_libs:
+        raise ValueError("expected Android libc dependency missing")
     package=root/"org/sempersupra/aar/golden"
     package.mkdir(parents=True,exist_ok=True)
     java=package/"NativeBridge.java"
