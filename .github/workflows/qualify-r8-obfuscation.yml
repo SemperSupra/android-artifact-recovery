@@ -8,6 +8,8 @@ on:
       - "tests/test_r8_factor_matrix.py"
       - "tests/test_r8_behavior_oracle.py"
       - "tools/experiment_r8_behavior_oracle.py"
+      - "tools/experiment_jadx_builtin_plugin_options.py"
+      - "tests/test_jadx_builtin_plugin_options.py"
       - "tools/experiment_r8_repair_isolation.py"
       - "tests/test_r8_repair_isolation.py"
       - "tests/test_r8_obfuscation.py"
@@ -32,7 +34,7 @@ jobs:
         with:
           gradle-version: '8.11.1'
       - name: Validate blinded mapping triage negative controls
-        run: python3 -m unittest -v tests.test_r8_obfuscation tests.test_r8_factor_matrix tests.test_r8_behavior_oracle tests.test_r8_repair_isolation
+        run: python3 -m unittest -v tests.test_r8_obfuscation tests.test_r8_factor_matrix tests.test_r8_behavior_oracle tests.test_r8_repair_isolation tests.test_jadx_builtin_plugin_options
       - name: Build unchanged baseline and separately R8-minified source-known fixture
         shell: bash
         working-directory: goldens/kotlin-dex
@@ -200,6 +202,46 @@ jobs:
         with:
           name: aar-r8-raw-java-behavior
           path: out/r8-behavior/result.json
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Pin and inspect JADX source behind the bundled Kotlin Metadata plugin
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/source-pinned-jadx"
+          mkdir "$src"
+          git -C "$src" init -q
+          git -C "$src" remote add origin https://github.com/skylot/jadx.git
+          git -C "$src" fetch --depth=1 --filter=blob:none origin 28ff15e4ae69950aebea110a13e5ab895d234dfc
+          git -C "$src" checkout -q FETCH_HEAD --             jadx-plugins/jadx-kotlin-metadata/src/main/kotlin/jadx/plugins/kotlin/metadata/KotlinMetadataOptions.kt             jadx-plugins/jadx-kotlin-metadata/src/main/kotlin/jadx/plugins/kotlin/metadata/pass/KotlinMetadataDecompilePass.kt             jadx-core/src/main/java/jadx/core/dex/visitors/MethodInvokeVisitor.java
+          test "$(git -C "$src" hash-object jadx-plugins/jadx-kotlin-metadata/src/main/kotlin/jadx/plugins/kotlin/metadata/KotlinMetadataOptions.kt)" = "ab2cb8a1e89357d29a212bd50503e787db735581"
+          test "$(git -C "$src" hash-object jadx-plugins/jadx-kotlin-metadata/src/main/kotlin/jadx/plugins/kotlin/metadata/pass/KotlinMetadataDecompilePass.kt)" = "c9c520625870e12c8ee35a6dc8d059dbbed190ec"
+          test "$(git -C "$src" hash-object jadx-core/src/main/java/jadx/core/dex/visitors/MethodInvokeVisitor.java)" = "2b681d211c1b99b3e66b78af056d31110b69bd6c"
+          echo "JADX_1_5_6_SOURCE_PIN=PASS"
+      - name: Test source-informed built-in Kotlin Metadata plugin options
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixture () { find "goldens/kotlin-dex/app/build/outputs/apk/$1" -name '*.apk' -type f -print -quit; }
+          stdlib="$(find "$HOME/.gradle/caches/modules-2/files-2.1/org.jetbrains.kotlin/kotlin-stdlib" -name 'kotlin-stdlib-2.0.21.jar' -print -quit)"
+          test -s "$stdlib"
+          python3 tools/experiment_jadx_builtin_plugin_options.py             --shrink-only-apk "$(fixture shrinkOnly)"             --shrink-optimize-apk "$(fixture shrinkOptimize)"             --jadx "$RUNNER_TEMP/jadx/bin/jadx"             --kotlin-stdlib "$stdlib"             --out out/jadx-builtin-plugin-probes
+          python3 - <<'PY'
+          import json
+          x=json.load(open("out/jadx-builtin-plugin-probes/probe.json"))
+          assert x["schema"]=="aar-jadx-source-pinned-kotlin-plugin-probe/v0"
+          assert x["third_party_plugins_installed"] is False
+          assert x["R8_mapping_given_to_jadx"] is False
+          assert len(x["results"])==2 and all(len(y)==4 for y in x["results"].values())
+          assert x["behavior"]=="NOT_TESTED" and x["plugin_adoption"]=="HOLD"
+          print("JADX_KOTLIN_PLUGIN_OPTION_SWEEP=PASS;SEMANTICS=UNKNOWN")
+          PY
+      - name: Retain only source-pinned plugin diagnostics and hashes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aar-jadx-builtin-kotlin-plugin-sweep
+          path: out/jadx-builtin-plugin-probes/probe.json
           if-no-files-found: ignore
           retention-days: 7
       - name: Retain aggregate nonbehavioral R8 factor observations
