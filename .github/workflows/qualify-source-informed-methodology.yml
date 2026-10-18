@@ -4,6 +4,7 @@ on:
     paths:
       - '.github/workflows/qualify-source-informed-methodology.yml'
       - 'tools/qualify_method_comparison.py'
+      - 'tools/experiment_ndk_jni_bridge_v0.py'
       - 'tests/test_qualify_method_comparison.py'
       - 'docs/recovery/source-informed-methodology-rdte-2026-10-13.md'
   workflow_dispatch:
@@ -27,3 +28,28 @@ jobs:
         run: |
           echo "Public-safe source-known fixtures and stdlib tests only."
           echo "No private APK, secrets, authenticated state, or proprietary data."
+
+  source-known-arm64-jni-bridge:
+    name: A1 source-known Android ARM64 native JNI and DEX bridge
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Compile public-safe JNI ELF and Java/D8 DEX with pinned installed NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/experiment_ndk_jni_bridge_v0.py
+      - name: Retain bounded JNI/DEX provenance receipt only
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: source-known-ndk-jni-bridge-${{ github.run_id }}
+          path: ${{ runner.temp }}/aar-ndk-jni-v0.json
+          if-no-files-found: ignore
+          retention-days: 30
+
