@@ -1,0 +1,143 @@
+name: Qualify source-known JADX actor model on free GHA CPU
+on:
+  workflow_dispatch:
+# Manual/authorized CI rerun only: avoid downloading large model weights on each PR edit.
+permissions:
+  contents: read
+jobs:
+  qwen3-local-reasoning-cross-over:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 23
+    env:
+      OLLAMA_VERSION: '0.34.1'
+      OLLAMA_ARCHIVE_SHA256: 'f361dc3992ec07e4ad429f4bb2d10d4663ba2c295f9a9a688c7d52f4ba650034'
+      OLLAMA_MODEL_TAG: 'qwen3:1.7b'
+      OLLAMA_MODEL_DIGEST_PREFIX: '8f68893c685c'
+      OLLAMA_HOST: '127.0.0.1:11434'
+      OLLAMA_MODELS: '/tmp/aar-jadx-qualification-models'
+      OLLAMA_NUM_PARALLEL: '1'
+      OLLAMA_MAX_LOADED_MODELS: '1'
+      OLLAMA_CONTEXT_LENGTH: '8192'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Negative-control public evaluator and build actual Java gateway
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s integrations/jadx-actor-assist/interviews -p 'test_*.py' -v
+          gradle -p integrations/jadx-actor-assist --no-daemon testClasses test
+      - name: Install previously qualified and hash-pinned Ollama runtime
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/ollama.tar.zst"
+          runtime="$RUNNER_TEMP/ollama-runtime"
+          curl --fail --location --silent --show-error --retry 3 \
+            "https://github.com/ollama/ollama/releases/download/v$OLLAMA_VERSION/ollama-linux-amd64.tar.zst" \
+            --output "$archive"
+          echo "$OLLAMA_ARCHIVE_SHA256  $archive" | sha256sum -c -
+          mkdir -p "$runtime"
+          zstd -d --stdout "$archive" | tar -xf - -C "$runtime"
+          echo "$runtime/bin" >> "$GITHUB_PATH"
+      - name: Hydrate pinned local Qwen3 CPU model
+        run: |
+          set -euo pipefail
+          mkdir -p "$OLLAMA_MODELS"
+          nohup env OLLAMA_HOST="$OLLAMA_HOST" OLLAMA_MODELS="$OLLAMA_MODELS" \
+            OLLAMA_NUM_PARALLEL=1 OLLAMA_MAX_LOADED_MODELS=1 \
+            OLLAMA_CONTEXT_LENGTH=8192 ollama serve >"$RUNNER_TEMP/ollama.log" 2>&1 &
+          for i in $(seq 1 60); do
+            curl --fail --silent "http://$OLLAMA_HOST/api/tags" >/dev/null && break
+            sleep 1
+          done
+          curl --fail --silent "http://$OLLAMA_HOST/api/tags" >/dev/null
+          ollama pull "$OLLAMA_MODEL_TAG"
+          python3 - <<'PY'
+          import json,os,urllib.request
+          url="http://"+os.environ["OLLAMA_HOST"]+"/api/tags"
+          with urllib.request.urlopen(url,timeout=10) as r: data=json.load(r)
+          tag=os.environ["OLLAMA_MODEL_TAG"]
+          m=next((x for x in data["models"] if x["name"]==tag),None)
+          assert m is not None
+          digest=m["digest"].removeprefix("sha256:")
+          assert digest.startswith(os.environ["OLLAMA_MODEL_DIGEST_PREFIX"]), "model digest drift"
+          print("PINNED_MODEL="+tag+";DIGEST="+digest)
+          PY
+      - name: Repeat matched reasoning and nonthinking interviews, without model output execution
+        run: |
+          set -euo pipefail
+          unset OPENROUTER_API_KEY OPENROUTER_MANAGEMENT_KEY DEEPSEEK_API_KEY GOOGLE_API_KEY || true
+          mkdir -p /tmp/aar-jadx-interview
+          fixture="$GITHUB_WORKSPACE/integrations/jadx-actor-assist/interviews/OverloadOracle.java"
+          for rep in 1 2 3; do
+            output="/tmp/aar-jadx-interview/rep-$rep"
+            mkdir -p "$output"
+            for role in DETERMINISTIC_CANDIDATE REASONING_CANDIDATE; do
+              argv="$fixture $role $OLLAMA_MODEL_TAG $output/$role.json"
+              gradle -p integrations/jadx-actor-assist --no-daemon --quiet \
+                interviewCli "-PinterviewArgs=$argv"
+              test -s "$output/$role.json"
+            done
+            python3 integrations/jadx-actor-assist/interviews/verify_interview.py \
+              "$fixture" "$output" "$output/score.json"
+          done
+          python3 - <<'PY'
+          import json
+          from collections import Counter
+          from pathlib import Path
+          base=Path("/tmp/aar-jadx-interview")
+          docs=[json.loads((base/("rep-"+str(i))/"score.json").read_text())
+                for i in (1,2,3)]
+          assert all(x["schema"]=="aar-jadx-local-interview-score/v1" for x in docs)
+          assert len({x["source_sha256"] for x in docs})==1
+          records=[r for rep,d in enumerate(docs,1) for r in d["results"]]
+          assert len(records)==6
+          profiles={}
+          for role in ("DETERMINISTIC_CANDIDATE","REASONING_CANDIDATE"):
+              xs=[r for r in records if r["role"]==role]
+              assert len(xs)==3
+              profiles[role]={
+                  "attempts":3,
+                  "pass":sum(bool(r["pass"]) for r in xs),
+                  "scoreable":sum(bool(r["scored"]) for r in xs),
+                  "runtime_output_correct":sum(bool(r["correct_output"]) for r in xs),
+                  "overload_correct":sum(bool(r["correct_signature"]) for r in xs),
+                  "source_name_uncertainty":sum(bool(r["uncertainty_calibrated"]) for r in xs),
+                  "valid_citations":sum(bool(r["valid_citations"]) for r in xs),
+                  "statuses":dict(Counter(r["status"] for r in xs)),
+                  "overload_kinds":dict(Counter(r["canonical_overload_kind"] for r in xs))
+              }
+          result={
+              "schema":"aar-jadx-replicated-configured-actor-receipt/v0",
+              "protocol":"THREE_MATCHED_REPEATS_SAME_PUBLIC_SYNTHETIC_JAVA_SOURCE",
+              "source_sha256":docs[0]["source_sha256"],
+              "configured_model":"qwen3:1.7b",
+              "provider":"OLLAMA_LOCAL",
+              "thinking_contract":"Ollama think false versus true",
+              "prompt_version":"aar-jadx-prompt-v2",
+              "scoring_policy":"JVM_OVERLOAD_CANONICALIZATION_V1",
+              "profiles":profiles,
+              "heldout_r8_kotlin":"NOT_RUN",
+              "generalized_actor_qualification":"NOT_ADMITTED",
+              "external_inference":"NOT_USED"
+          }
+          (base/"aggregate.json").write_text(json.dumps(result,sort_keys=True,indent=2)+"\n")
+          print("AAR_REPLICATED_CPU_ACTOR_INTERVIEWS="+json.dumps(profiles,sort_keys=True))
+          PY
+      - name: Retain aggregate and per-rep scored receipt only, no model text
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aar-jadx-qwen3-cpu-replicated-interview
+          path: |
+            /tmp/aar-jadx-interview/aggregate.json
+            /tmp/aar-jadx-interview/rep-*/score.json
+          if-no-files-found: ignore
+          retention-days: 7

@@ -1,0 +1,33 @@
+plugins {
+    id 'java'
+    id 'com.gradleup.shadow' version '8.3.0'
+}
+group = 'org.sempersupra.aar'
+version = '0.1.0-experimental'
+repositories { mavenCentral() }
+dependencies {
+    compileOnly 'io.github.skylot:jadx-core:1.5.6'
+    implementation 'com.google.code.gson:gson:2.11.0'
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.11.0'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.11.0'
+}
+java {
+    sourceCompatibility = JavaVersion.VERSION_11
+    targetCompatibility = JavaVersion.VERSION_11
+}
+tasks.withType(Test).configureEach {
+    useJUnitPlatform()
+}
+shadowJar {
+    archiveClassifier.set('')
+    mergeServiceFiles()
+}
+tasks.named('build') { dependsOn tasks.named('shadowJar') }
+
+tasks.register('interviewCli', JavaExec) {
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'org.sempersupra.aar.jadx.ActorAssistInterviewCli'
+    if (project.hasProperty('interviewArgs')) {
+        args project.property('interviewArgs').toString().split(/\s+/)
+    }
+}
