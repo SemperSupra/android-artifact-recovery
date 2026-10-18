@@ -122,7 +122,22 @@ def execute(root:Path)->None:
     process=subprocess.run(
         ["adb","shell","env","CLASSPATH=/data/local/tmp/aar_a2.dex.jar",
          "app_process","/system/bin","org.sempersupra.aar.golden.RuntimeProbe"],
-        capture_output=True,text=True,timeout=90,check=True)
+        capture_output=True,text=True,timeout=90,check=False)
+    if process.returncode != 0:
+        # Capture only bounded diagnostic excerpts. No application source or
+        # device-private data is uploaded. Never reinterpret failure as success.
+        print("AAR_A2_ART_EXIT="+str(process.returncode), file=sys.stderr)
+        print("AAR_A2_STDOUT="+process.stdout[-2000:].replace("\n"," | "), file=sys.stderr)
+        print("AAR_A2_STDERR="+process.stderr[-3000:].replace("\n"," | "), file=sys.stderr)
+        for name, argv in (
+            ("GUEST_ABI",["adb","shell","getprop","ro.product.cpu.abi"]),
+            ("GUEST_MEMORY",["adb","shell","cat","/proc/meminfo"]),
+            ("DEX_AND_SO",["adb","shell","ls","-l","/data/local/tmp/aar_a2_native.so","/data/local/tmp/aar_a2.dex.jar"]),
+            ("ART_LOGCAT",["adb","logcat","-d","-t","120","-s","AndroidRuntime:E","art:E","libc:E","Zygote:E"])):
+            diag=subprocess.run(argv,capture_output=True,text=True,timeout=15,check=False)
+            lines=[x[:250] for x in (diag.stdout+diag.stderr).splitlines()]
+            print("AAR_A2_"+name+"="+str(lines[-22:]),file=sys.stderr)
+        raise ValueError("ART_PROCESS_NONZERO_"+str(process.returncode))
     lines=process.stdout.splitlines()
     matches=re.findall(r"^AAR_A2_VECTOR=(\d+),(-?\d+),(-?\d+),(-?\d+)$",process.stdout,re.M)
     vectors=[(5,0),(5,1),(5,-1),(5,0x12345678),
