@@ -31,6 +31,24 @@ class AssistGatewayTest {
         assertEquals("https",req.uri().getScheme());
         assertEquals("Bearer fake-unit-test-only",req.headers().firstValue("Authorization").orElseThrow());
     }
+    @Test void managedRouteRequiresOptInProviderPinAndConsent() {
+        AssistProfile metered = new AssistProfile(AssistProfile.Provider.OPENROUTER_MANAGED,
+            AssistProfile.Role.REASONING_CANDIDATE,"deepseek/deepseek-chat",
+            URI.create("https://openrouter.ai/api/v1/chat/completions"),0.2,"medium");
+        AssistGateway disabled=new AssistGateway(HttpClient.newHttpClient(),()->"fake",()->null,
+            ()->false,()->"DeepSeek");
+        assertThrows(SecurityException.class,()->disabled.build(metered,PACKET,true));
+        AssistGateway unpinned=new AssistGateway(HttpClient.newHttpClient(),()->"fake",()->null,
+            ()->true,()->null);
+        assertThrows(SecurityException.class,()->unpinned.build(metered,PACKET,true));
+        AssistGateway granted=new AssistGateway(HttpClient.newHttpClient(),()->"fake",()->null,
+            ()->true,()->"DeepSeek");
+        assertThrows(SecurityException.class,()->granted.build(metered,PACKET,false));
+        var req=granted.build(metered,PACKET,true);
+        assertEquals("https",req.uri().getScheme());
+        String body=req.bodyPublisher().map(pub->pub.toString()).orElse("");
+        assertTrue(req.headers().firstValue("Authorization").isPresent());
+    }
     @Test void scopedLocalGatewayCredentialIsOptionalAndNeverForOllama() {
         AssistGateway gw=new AssistGateway(HttpClient.newHttpClient(),()->"external",
             ()->"local-scoped-test-key");

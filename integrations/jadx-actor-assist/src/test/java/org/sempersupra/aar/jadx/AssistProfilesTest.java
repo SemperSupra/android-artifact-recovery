@@ -16,6 +16,14 @@ class AssistProfilesTest {
             AssistProfile.Provider.OPENROUTER_FREE, AssistProfile.Role.REASONING_CANDIDATE,
             "good/model:free",URI.create("http://openrouter.ai/api/v1/chat/completions"),0.2,"medium"));
     }
+    @Test void rejectsFreeModelOnMeteredRoute() {
+        assertThrows(IllegalArgumentException.class,()->new AssistProfile(
+            AssistProfile.Provider.OPENROUTER_MANAGED,AssistProfile.Role.REASONING_CANDIDATE,
+            "openrouter/free",URI.create("https://openrouter.ai/api/v1/chat/completions"),0.2,"medium"));
+        assertDoesNotThrow(()->new AssistProfile(
+            AssistProfile.Provider.OPENROUTER_MANAGED,AssistProfile.Role.REASONING_CANDIDATE,
+            "deepseek/deepseek-chat",URI.create("https://openrouter.ai/api/v1/chat/completions"),0.2,"medium"));
+    }
     @Test void admitsNamedFreeRouterButNotArbitraryModel() {
         assertDoesNotThrow(() -> new AssistProfile(
             AssistProfile.Provider.OPENROUTER_FREE, AssistProfile.Role.REASONING_CANDIDATE,
