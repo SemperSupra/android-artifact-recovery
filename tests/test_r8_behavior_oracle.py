@@ -26,6 +26,20 @@ class RawOracleControls(unittest.TestCase):
         self.assertEqual(result["state"],"OUTPUT_INVALID")
         self.assertEqual(result["unknown"],10)
 
+
+    def test_compiler_taxonomy_redacts_symbols_and_paths(self):
+        stderr=(b"/home/user/secrets/G.dart:4: error: cannot find symbol\n"
+                b"  location: class PrivateUser\n"
+                b"error: incompatible types: Object cannot be converted to String\n")
+        categories=O.categorize_javac(stderr)
+        self.assertEqual(categories["missing_symbol"],1)
+        self.assertEqual(categories["type_incompatibility"],1)
+        self.assertNotIn("PrivateUser",str(categories))
+        self.assertNotIn("/home",str(categories))
+
+    def test_unknown_javac_diagnostic_is_not_success(self):
+        self.assertEqual(O.categorize_javac(b"error: unusual syntax"),{"unclassified_javac_diagnostic":1})
+
     def test_renamed_profiles_not_unblinded(self):
         self.assertEqual(O.RENAMED,("rename-only","full-r8"))
         self.assertEqual(len(O.LABELS),5)

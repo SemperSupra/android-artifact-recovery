@@ -11,6 +11,7 @@ import hashlib
 import json
 from pathlib import Path
 import shutil
+import re
 import sys
 
 from repair_jadx_kotlin_java import repair
@@ -52,6 +53,9 @@ def stage(raw: Path, out: Path) -> dict:
             records[label]={"state":"UNSUPPORTED_PATTERN",
                             "repair_applied":False,"raw_sha256":before,
                             "error_category":"EXPECTED_PATTERN_MISMATCH",
+                            "first_rejected_rule":(re.match(r"^(jadx\\.[A-Za-z0-9_.-]+):",str(error)).group(1)
+                                                   if re.match(r"^(jadx\\.[A-Za-z0-9_.-]+):",str(error))
+                                                   else "UNKNOWN_RULE"),
                             "semantic_evidence":"UNKNOWN"}
             continue
         # The reference pattern count is fixed in the *existing* repair,

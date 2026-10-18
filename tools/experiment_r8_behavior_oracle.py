@@ -18,6 +18,27 @@ LABELS=("release","rename-only","shrink-only","shrink-optimize","full-r8")
 RENAMED=("rename-only","full-r8")
 TARGET=Path("org/sempersupra/aar/golden/kotlin")
 
+def categorize_javac(stderr: bytes) -> dict:
+    """Public-safe diagnostic taxonomy: no source strings, paths, or symbols."""
+    value=stderr.decode("utf-8","replace")
+    markers={
+        "missing_symbol":"cannot find symbol",
+        "missing_package":"does not exist",
+        "type_incompatibility":"incompatible types",
+        "wrong_overload":"cannot be applied to given types",
+        "duplicate_definition":"is already defined",
+        "invalid_generated_java":"illegal start of expression",
+        "invalid_statement":"not a statement",
+        "visibility":"has private access",
+        "unhandled_exception":"unreported exception",
+        "ambiguous_method":"reference to",
+    }
+    results={key:value.count(pattern) for key,pattern in markers.items()}
+    results={key:n for key,n in results.items() if n}
+    if b"error:" in stderr and not results:
+        results["unclassified_javac_diagnostic"]=1
+    return results
+
 def call(argv: list[str],seconds: int=90) -> tuple[dict,bytes]:
     started=time.monotonic()
     try:
@@ -27,7 +48,8 @@ def call(argv: list[str],seconds: int=90) -> tuple[dict,bytes]:
                  "duration_ms":round((time.monotonic()-started)*1000,2),
                  "stdout_sha256":hashlib.sha256(proc.stdout).hexdigest(),
                  "stderr_sha256":hashlib.sha256(proc.stderr).hexdigest(),
-                 "compiler_error_lines":sum(b"error:" in ln for ln in proc.stderr.splitlines())},
+                 "compiler_error_lines":sum(b"error:" in ln for ln in proc.stderr.splitlines()),
+                 "javac_diagnostic_categories":categorize_javac(proc.stderr)},
                 proc.stdout)
     except subprocess.TimeoutExpired:
         return ({"exit_code":None,"timeout":True,"duration_ms":seconds*1000},b"")
@@ -110,7 +132,8 @@ def evaluate(original: Path,stdlib: Path,annotations: Path|None,
                         value.update(classify(expected,raw))
         methods[label]=value
         print(json.dumps({"variant":label,"result":value["state"],
-                          "matched":value["matched"],"unknown":value["unknown"]},
+                          "matched":value["matched"],"unknown":value["unknown"],
+                          "javac_categories":value.get("java_compile",{}).get("javac_diagnostic_categories",{})},
                          sort_keys=True),flush=True)
     doc={"schema":"aar-r8-raw-java-oracle/v0",
          "source_known_oracle_vectors":10,"original_compile":original_compile,
