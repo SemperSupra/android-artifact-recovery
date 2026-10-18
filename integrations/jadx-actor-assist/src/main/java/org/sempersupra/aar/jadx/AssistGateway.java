@@ -27,15 +27,22 @@ public final class AssistGateway {
     }
     private final HttpClient client;
     private final Supplier<String> externalKey;
+    private final Supplier<String> localGatewayKey;
     private final Gson gson = new Gson();
     public AssistGateway() {
         this(HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(8))
             .followRedirects(HttpClient.Redirect.NEVER).build(),
-            () -> System.getenv("OPENROUTER_API_KEY"));
+            () -> System.getenv("OPENROUTER_API_KEY"),
+            () -> System.getenv("AAR_ASSIST_LOCAL_GATEWAY_KEY"));
     }
     public AssistGateway(HttpClient client, Supplier<String> externalKey) {
+        this(client, externalKey, () -> null);
+    }
+    public AssistGateway(HttpClient client, Supplier<String> externalKey,
+                         Supplier<String> localGatewayKey) {
         this.client=Objects.requireNonNull(client);
         this.externalKey=Objects.requireNonNull(externalKey);
+        this.localGatewayKey=Objects.requireNonNull(localGatewayKey);
     }
     /** Consent is checked at transport boundary, not only in GUI. */
     public HttpRequest build(AssistProfile profile, EvidencePrompt.Packet packet,
@@ -71,6 +78,12 @@ public final class AssistGateway {
             .timeout(Duration.ofSeconds(90))
             .header("Content-Type","application/json")
             .POST(HttpRequest.BodyPublishers.ofString(gson.toJson(json)));
+        if (profile.provider == AssistProfile.Provider.OPENAI_LOCAL) {
+            String localKey=localGatewayKey.get();
+            if (localKey != null && !localKey.isBlank()) {
+                request.header("Authorization","Bearer "+localKey);
+            }
+        }
         if (external) {
             String key=externalKey.get();
             if (key == null || key.isBlank()) {
