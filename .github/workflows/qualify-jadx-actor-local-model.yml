@@ -1,0 +1,109 @@
+name: Qualify source-known JADX actor model on free GHA CPU
+on:
+  pull_request:
+    paths:
+      - "integrations/jadx-actor-assist/interviews/**"
+      - "integrations/jadx-actor-assist/src/test/java/org/sempersupra/aar/jadx/ActorAssistInterviewCli.java"
+      - "integrations/jadx-actor-assist/src/main/java/org/sempersupra/aar/jadx/AssistGateway.java"
+      - ".github/workflows/qualify-jadx-actor-local-model.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  qwen3-local-reasoning-cross-over:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 23
+    env:
+      OLLAMA_VERSION: '0.34.1'
+      OLLAMA_ARCHIVE_SHA256: 'f361dc3992ec07e4ad429f4bb2d10d4663ba2c295f9a9a688c7d52f4ba650034'
+      OLLAMA_MODEL_TAG: 'qwen3:1.7b'
+      OLLAMA_MODEL_DIGEST_PREFIX: '8f68893c685c'
+      OLLAMA_HOST: '127.0.0.1:11434'
+      OLLAMA_MODELS: '/tmp/aar-jadx-qualification-models'
+      OLLAMA_NUM_PARALLEL: '1'
+      OLLAMA_MAX_LOADED_MODELS: '1'
+      OLLAMA_CONTEXT_LENGTH: '8192'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Negative-control public evaluator and build actual Java gateway
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s integrations/jadx-actor-assist/interviews -p 'test_*.py' -v
+          gradle -p integrations/jadx-actor-assist --no-daemon testClasses test
+      - name: Install previously qualified and hash-pinned Ollama runtime
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/ollama.tar.zst"
+          runtime="$RUNNER_TEMP/ollama-runtime"
+          curl --fail --location --silent --show-error --retry 3 \
+            "https://github.com/ollama/ollama/releases/download/v$OLLAMA_VERSION/ollama-linux-amd64.tar.zst" \
+            --output "$archive"
+          echo "$OLLAMA_ARCHIVE_SHA256  $archive" | sha256sum -c -
+          mkdir -p "$runtime"
+          zstd -d --stdout "$archive" | tar -xf - -C "$runtime"
+          echo "$runtime/bin" >> "$GITHUB_PATH"
+      - name: Hydrate pinned local Qwen3 CPU model
+        run: |
+          set -euo pipefail
+          mkdir -p "$OLLAMA_MODELS"
+          nohup env OLLAMA_HOST="$OLLAMA_HOST" OLLAMA_MODELS="$OLLAMA_MODELS" \
+            OLLAMA_NUM_PARALLEL=1 OLLAMA_MAX_LOADED_MODELS=1 \
+            OLLAMA_CONTEXT_LENGTH=8192 ollama serve >"$RUNNER_TEMP/ollama.log" 2>&1 &
+          for i in $(seq 1 60); do
+            curl --fail --silent "http://$OLLAMA_HOST/api/tags" >/dev/null && break
+            sleep 1
+          done
+          curl --fail --silent "http://$OLLAMA_HOST/api/tags" >/dev/null
+          ollama pull "$OLLAMA_MODEL_TAG"
+          python3 - <<'PY'
+          import json,os,urllib.request
+          url="http://"+os.environ["OLLAMA_HOST"]+"/api/tags"
+          with urllib.request.urlopen(url,timeout=10) as r: data=json.load(r)
+          tag=os.environ["OLLAMA_MODEL_TAG"]
+          m=next((x for x in data["models"] if x["name"]==tag),None)
+          assert m is not None
+          digest=m["digest"].removeprefix("sha256:")
+          assert digest.startswith(os.environ["OLLAMA_MODEL_DIGEST_PREFIX"]), "model digest drift"
+          print("PINNED_MODEL="+tag+";DIGEST="+digest)
+          PY
+      - name: Run same actual gateway with nonthinking and thinking configurations
+        run: |
+          set -euo pipefail
+          unset OPENROUTER_API_KEY OPENROUTER_MANAGEMENT_KEY DEEPSEEK_API_KEY GOOGLE_API_KEY || true
+          mkdir -p /tmp/aar-jadx-interview
+          fixture="$GITHUB_WORKSPACE/integrations/jadx-actor-assist/interviews/OverloadOracle.java"
+          for role in DETERMINISTIC_CANDIDATE REASONING_CANDIDATE; do
+            argv="$fixture $role $OLLAMA_MODEL_TAG /tmp/aar-jadx-interview/$role.json"
+            gradle -p integrations/jadx-actor-assist --no-daemon --quiet interviewCli "-PinterviewArgs=$argv"
+            test -s "/tmp/aar-jadx-interview/$role.json"
+          done
+          python3 integrations/jadx-actor-assist/interviews/verify_interview.py \
+            "$fixture" /tmp/aar-jadx-interview /tmp/aar-jadx-interview/score.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open("/tmp/aar-jadx-interview/score.json"))
+          assert d["schema"]=="aar-jadx-local-interview-score/v0"
+          assert len(d["results"])==2
+          assert d["model_generalization"]=="UNKNOWN"
+          assert d["external_inference"]=="NOT_USED"
+          if all(x["status"]=="INCOMPLETE" for x in d["results"]):
+              raise SystemExit("BLOCKED_NO_LIVE_MODEL_OBSERVATION")
+          print("ACTUAL_JADX_GATEWAY_MODEL_INTERVIEW=OBSERVED;GENERALIZATION=UNKNOWN")
+          PY
+      - name: Retain only bounded scoring; no raw model output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aar-jadx-qwen3-cpu-role-interview
+          path: /tmp/aar-jadx-interview/score.json
+          if-no-files-found: ignore
+          retention-days: 7

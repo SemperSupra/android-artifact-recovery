@@ -23,3 +23,11 @@ shadowJar {
     mergeServiceFiles()
 }
 tasks.named('build') { dependsOn tasks.named('shadowJar') }
+
+tasks.register('interviewCli', JavaExec) {
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'org.sempersupra.aar.jadx.ActorAssistInterviewCli'
+    if (project.hasProperty('interviewArgs')) {
+        args project.property('interviewArgs').toString().split(/\s+/)
+    }
+}
