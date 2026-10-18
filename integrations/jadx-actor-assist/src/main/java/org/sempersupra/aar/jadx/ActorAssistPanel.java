@@ -98,7 +98,9 @@ public final class ActorAssistPanel extends JDialog {
                         c instanceof IllegalStateException ? c.getMessage() : "INCOMPLETE_TRANSPORT";
                     output.setText("NOT_QUALIFIED: "+code+"\nNo behavioral or recovery evidence.");
                 } else {
-                    output.setText("UNVERIFIED MODEL HYPOTHESES\nModel "+reply.model+
+                    output.setText("UNVERIFIED MODEL HYPOTHESES\nRequested model "+reply.model+
+                        "\nProvider-reported model "+reply.observedModel+
+                        "\nActual BYOK account route: UNKNOWN"
                         "\nCode SHA256 "+reply.codeSha256+
                         "\nPrompt "+reply.promptVersion+
                         "\nMust independently confirm every claim using DEX/JVM/behavior oracles.\n\n"+
