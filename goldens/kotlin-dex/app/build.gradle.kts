@@ -28,6 +28,16 @@ android {
         release {
             isMinifyEnabled = false
         }
+        create("obfuscated") {
+            initWith(getByName("release"))
+            isMinifyEnabled = true
+            isShrinkResources = false
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "aar-obfuscation-rules.pro",
+            )
+            matchingFallbacks += listOf("release")
+        }
     }
 
     testOptions {
