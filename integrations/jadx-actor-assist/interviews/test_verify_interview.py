@@ -20,6 +20,14 @@ class VerdictTests(unittest.TestCase):
             "evidence":["L5","L8"]})
         return a
     def test_exact(self):self.assertTrue(V.verdict(self.good(),SRC,"OBJECT")["pass"])
+    def test_parameter_name_is_not_part_of_jvm_signature(self):
+        for candidate in ("a(Object x)","static String a(Object x)",
+                          "OverloadOracle.a(java.lang.Object)",
+                          "public static java.lang.String a(java.lang.Object x)"):
+            self.assertEqual(V.canonical_signature_kind(candidate),"OBJECT")
+        self.assertEqual(V.canonical_signature_kind("a(String)"),"STRING")
+        self.assertEqual(V.canonical_signature_kind("a(CharSequence)"),"UNPARSEABLE")
+        self.assertEqual(V.canonical_signature_kind("Object"),"UNPARSEABLE")
     def test_wrong_overload(self):
         a=self.good();a["candidate"]=a["candidate"].replace("a(Object)","a(String)")
         self.assertFalse(V.verdict(a,SRC,"OBJECT")["pass"])

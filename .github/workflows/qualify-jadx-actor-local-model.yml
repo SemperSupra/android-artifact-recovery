@@ -91,7 +91,7 @@ jobs:
           python3 - <<'PY'
           import json
           d=json.load(open("/tmp/aar-jadx-interview/score.json"))
-          assert d["schema"]=="aar-jadx-local-interview-score/v0"
+          assert d["schema"]=="aar-jadx-local-interview-score/v1"
           assert len(d["results"])==2
           assert d["model_generalization"]=="UNKNOWN"
           assert d["external_inference"]=="NOT_USED"
