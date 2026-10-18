@@ -56,6 +56,34 @@ public final class AssistGateway {
         this.meteredEnabled=Objects.requireNonNull(meteredEnabled);
         this.routingProvider=Objects.requireNonNull(routingProvider);
     }
+    /** The schema supplies shape only, never hidden source/behavior ground truth. */
+    static JsonObject interviewJsonSchema() {
+        JsonObject schema = new JsonObject();
+        schema.addProperty("type","object");
+        JsonObject props = new JsonObject();
+        for (String name : new String[]{
+                "runtime_output","selected_signature","original_source_names"}) {
+            JsonObject field = new JsonObject();
+            field.addProperty("type","string");
+            props.add(name,field);
+        }
+        JsonObject evidence = new JsonObject();
+        evidence.addProperty("type","array");
+        JsonObject line = new JsonObject();
+        line.addProperty("type","string");
+        evidence.add("items",line);
+        props.add("evidence",evidence);
+        schema.add("properties",props);
+        JsonArray required = new JsonArray();
+        for (String name : new String[]{
+                "runtime_output","selected_signature","original_source_names","evidence"}) {
+            required.add(name);
+        }
+        schema.add("required",required);
+        schema.addProperty("additionalProperties",false);
+        return schema;
+    }
+
     /** Consent is checked at transport boundary, not only in GUI. */
     public HttpRequest build(AssistProfile profile, EvidencePrompt.Packet packet,
                              boolean externalDisclosureApproved) {
@@ -84,7 +112,7 @@ public final class AssistGateway {
             options.addProperty("temperature",profile.temperature);
             options.addProperty("num_predict",1024);
             json.addProperty("think",profile.role == AssistProfile.Role.REASONING_CANDIDATE);
-            if (packet.strictJson) json.addProperty("format","json");
+            if (packet.strictJson) json.add("format",interviewJsonSchema());
             json.add("options", options);
         } else {
             JsonArray messages=new JsonArray();

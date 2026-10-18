@@ -98,6 +98,18 @@ class AssistGatewayTest {
             local(AssistProfile.Provider.OLLAMA_LOCAL,12345),standard,false)
             .headers().firstValue("Authorization").isPresent());
     }
+    @Test void strictJsonSchemaHasNoHiddenAnswerAndRejectsExtraneousFields() {
+        JsonObject schema=AssistGateway.interviewJsonSchema();
+        assertEquals("object",schema.get("type").getAsString());
+        assertFalse(schema.get("additionalProperties").getAsBoolean());
+        assertEquals(4,schema.getAsJsonArray("required").size());
+        JsonObject fields=schema.getAsJsonObject("properties");
+        assertEquals(4,fields.size());
+        assertEquals("array",fields.getAsJsonObject("evidence").get("type").getAsString());
+        assertFalse(schema.toString().contains("OBJECT"));
+        assertFalse(schema.toString().contains("a(Object)"));
+        assertFalse(schema.toString().contains("UNKNOWN"));
+    }
     @Test void openAiCompatibleStructuredMessagesRoundTrip() throws Exception {
         HttpServer server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
         AtomicReference<JsonObject> captured=new AtomicReference<>();
