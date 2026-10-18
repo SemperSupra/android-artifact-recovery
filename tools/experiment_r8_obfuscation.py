@@ -75,6 +75,87 @@ def dex_members(path: Path) -> dict:
         raise ValueError("APK has no root DEX")
     return dict(sorted(members.items()))
 
+
+def blind_dex_name_signals(apk: Path) -> dict:
+    """Bounded DEX class-name lengths only; no R8 mapping, no identity lookup.
+
+    Low name lengths are a weak indication, not an obfuscation verdict.
+    """
+    import struct
+    total, short, unreadable = 0, 0, 0
+    with zipfile.ZipFile(apk) as zf:
+        members = [x for x in zf.infolist()
+                   if re.fullmatch(r"classes(?:[2-9]\d*)?\.dex", x.filename)]
+        if len(members) > 32:
+            raise ValueError("DEX member count limit")
+        for entry in members:
+            if entry.file_size < 112 or entry.file_size > 64 * 1024 * 1024:
+                raise ValueError("invalid DEX member size for independent name probe")
+            with zf.open(entry) as reader:
+                buf = reader.read(64 * 1024 * 1024 + 1)
+            if len(buf) != entry.file_size or len(buf) > 64 * 1024 * 1024:
+                raise ValueError("DEX byte limit exceeded")
+            if not buf.startswith(b"dex\n") or buf[7] != 0:
+                raise ValueError("invalid DEX magic")
+            def uint(offset: int) -> int:
+                if offset < 0 or offset + 4 > len(buf):
+                    raise ValueError("DEX table outside file")
+                return struct.unpack_from("<I", buf, offset)[0]
+            if uint(0x20) != len(buf) or uint(0x24) != 112 or uint(0x28) != 0x12345678:
+                raise ValueError("DEX header or declared length invalid")
+            string_count,string_off = uint(0x38),uint(0x3c)
+            type_count,type_off = uint(0x40),uint(0x44)
+            class_count,class_off = uint(0x60),uint(0x64)
+            if string_count > 2_000_000 or type_count > 1_000_000 or class_count > 100_000:
+                raise ValueError("DEX table count budget exceeded")
+            for count, start, width in ((string_count,string_off,4),
+                                        (type_count,type_off,4),
+                                        (class_count,class_off,32)):
+                if start < 112 or start + count * width > len(buf):
+                    raise ValueError("DEX table outside file")
+            for i in range(class_count):
+                idx = uint(class_off + i*32)
+                if idx >= type_count:
+                    raise ValueError("class type index outside DEX type table")
+                string_idx=uint(type_off + idx*4)
+                if string_idx >= string_count:
+                    raise ValueError("type descriptor string index outside table")
+                start=uint(string_off + string_idx*4)
+                if start >= len(buf):
+                    raise ValueError("DEX descriptor data offset outside file")
+                # DEX string-data item begins with UTF-16 length encoded ULEB128.
+                pos=start
+                for _ in range(5):
+                    if pos >= len(buf):
+                        raise ValueError("truncated DEX ULEB128")
+                    val=buf[pos]
+                    pos+=1
+                    if not val & 0x80:
+                        break
+                else:
+                    raise ValueError("oversized DEX ULEB128")
+                end=buf.find(b"\0",pos,min(len(buf),pos+4096))
+                if end < 0:
+                    raise ValueError("unterminated DEX class descriptor")
+                try:
+                    descriptor=buf[pos:end].decode("utf-8")
+                except UnicodeDecodeError:
+                    unreadable+=1
+                    continue
+                if not (descriptor.startswith("L") and descriptor.endswith(";")):
+                    unreadable+=1
+                    continue
+                basename=descriptor[1:-1].split("/")[-1]
+                total+=1
+                if len(basename) <= 2:
+                    short+=1
+    return {"classes_with_decodable_descriptor": total,
+            "short_simple_names_1_to_2_chars": short,
+            "unreadable_descriptor_count": unreadable,
+            "short_name_fraction": round(short / total, 4) if total else None,
+            "classification": "INDICATOR_ONLY" if total >= 10 else "INSUFFICIENT_SAMPLES",
+            "source_name_restoration": "UNKNOWN"}
+
 def execute(argv: list[str], timeout: int) -> dict:
     started = time.monotonic()
     try:
@@ -100,6 +181,8 @@ def interview(baseline: Path, candidate: Path, mapping: Path, jadx: Path,
     mapping_stats = read_mapping(mapping)
     base_dex = dex_members(baseline)
     cand_dex = dex_members(candidate)
+    blind_baseline = blind_dex_name_signals(baseline)
+    blind_candidate = blind_dex_name_signals(candidate)
     if sha(baseline) == sha(candidate):
         raise ValueError("R8 candidate APK did not differ from source-known baseline")
     out.mkdir(parents=True)
@@ -135,6 +218,7 @@ def interview(baseline: Path, candidate: Path, mapping: Path, jadx: Path,
         "calibration": mapping_stats,
         "baseline_dex_sha256": base_dex,
         "candidate_dex_sha256": cand_dex,
+        "blind_name_signals": {"baseline": blind_baseline, "candidate": blind_candidate},
         "modes": reports,
         "selection": "NO_BEST_MODE_WITHOUT_INDEPENDENT_BEHAVIORAL_ORACLE",
         "mitigation": "ALIASES_NOT_ORIGINAL_NAMES; NO_BYPASS; REPAIR_NOT_APPLIED",
