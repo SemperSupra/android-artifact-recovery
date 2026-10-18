@@ -1,0 +1,87 @@
+name: Qualify R8 obfuscation detection and blind JADX variants
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/qualify-r8-obfuscation.yml"
+      - "tools/experiment_r8_obfuscation.py"
+      - "tests/test_r8_obfuscation.py"
+      - "goldens/kotlin-dex/app/build.gradle.kts"
+      - "goldens/kotlin-dex/app/aar-obfuscation-rules.pro"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  source-known-r8-obfuscation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 16
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Validate blinded mapping triage negative controls
+        run: python3 -m unittest -v tests.test_r8_obfuscation
+      - name: Build unchanged baseline and separately R8-minified source-known fixture
+        shell: bash
+        working-directory: goldens/kotlin-dex
+        run: |
+          set -euo pipefail
+          for attempt in 1 2; do
+            if gradle --no-daemon assembleRelease assembleObfuscated; then
+              echo "SOURCE_KNOWN_R8_BUILD=PASS;ATTEMPT=$attempt"
+              exit 0
+            fi
+            if [ "$attempt" = 1 ]; then sleep 8; fi
+          done
+          echo "SOURCE_KNOWN_R8_BUILD=BLOCKED"
+          exit 1
+      - name: Install precise JADX 1.5.6 binary already used by AAR
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --max-time 120 \
+            https://github.com/skylot/jadx/releases/download/v1.5.6/jadx-1.5.6.zip \
+            -o "$RUNNER_TEMP/jadx.zip"
+          echo "545ea2be9c242511bc145755cf4bda2485ade42966e096f8b4d3da2a230e8974  $RUNNER_TEMP/jadx.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/jadx.zip" -d "$RUNNER_TEMP/jadx"
+      - name: Compare source-known R8 obfuscated APK against unchanged baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          baseline="$(find goldens/kotlin-dex/app/build/outputs/apk/release -type f -name '*.apk' -print -quit)"
+          candidate="$(find goldens/kotlin-dex/app/build/outputs/apk/obfuscated -type f -name '*.apk' -print -quit)"
+          mapping="goldens/kotlin-dex/app/build/outputs/mapping/obfuscated/mapping.txt"
+          test -s "$baseline" && test -s "$candidate" && test -s "$mapping"
+          python3 tools/experiment_r8_obfuscation.py \
+            --baseline-apk "$baseline" \
+            --candidate-apk "$candidate" \
+            --mapping "$mapping" \
+            --jadx "$RUNNER_TEMP/jadx/bin/jadx" \
+            --out out/r8-obfuscation
+          python3 - <<'PY'
+          import json
+          result=json.load(open("out/r8-obfuscation/interview.json"))
+          assert result["schema"]=="aar-r8-obfuscation-interview/v0"
+          assert result["calibration"]["known_oracle_class_renamed"] is True
+          assert result["calibration"]["renamed_classes"]>=1
+          assert len(result["modes"])==6
+          assert result["oracle_mapping_visible_to_candidates"] is False
+          assert result["selection"]=="NO_BEST_MODE_WITHOUT_INDEPENDENT_BEHAVIORAL_ORACLE"
+          assert all(x["source_equivalence"]=="UNKNOWN" and x["recovered_behavior"]=="UNKNOWN"
+                     for x in result["modes"].values())
+          print("R8_OBFUSCATION_CALIBRATION=PASS;BLIND_RECOVERY=UNKNOWN")
+          PY
+      - name: Retain only bounded public metric receipt, not ground-truth mapping or decompiled sources
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aar-r8-public-blind-variant-metrics
+          path: out/r8-obfuscation/interview.json
+          if-no-files-found: ignore
+          retention-days: 7
