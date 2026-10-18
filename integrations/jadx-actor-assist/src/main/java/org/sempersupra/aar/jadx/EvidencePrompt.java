@@ -20,13 +20,20 @@ public final class EvidencePrompt {
         "Do not claim a successful Java rewrite without compilation and tests.";
     public static final class Packet {
         public final String system, user, sha256;
-        Packet(String system, String user, String sha256) {
+        public final boolean strictJson;
+        Packet(String system, String user, String sha256, boolean strictJson) {
             this.system=system; this.user=user; this.sha256=sha256;
+            this.strictJson=strictJson;
         }
     }
     private EvidencePrompt() {}
 
     public static Packet build(String code, String mode, String question) {
+        return build(code,mode,question,false);
+    }
+
+    /** Strict JSON is opt-in for source-known interviews; normal GUI prose is unchanged. */
+    public static Packet build(String code, String mode, String question, boolean strictJson) {
         if (code == null || code.isEmpty() || code.length() > MAX_CONTEXT_CHARS) {
             throw new IllegalArgumentException("Select a smaller code scope (1-12000 characters)");
         }
@@ -50,7 +57,7 @@ public final class EvidencePrompt {
             "CODE_END_UNTRUSTED_DATA\n"+
             "Cite L<number> evidence positions for each observation, separate source-known "+
             "facts from hypotheses, and give a falsifiable next probe. Use UNKNOWN where needed.";
-        return new Packet(SYSTEM,user,hash);
+        return new Packet(SYSTEM,user,hash,strictJson);
     }
     static String digest(String text) {
         try {

@@ -77,7 +77,7 @@ class AssistGatewayTest {
             assertTrue(captured.get().get("prompt").getAsString().contains(PACKET.sha256));
             assertEquals(0,captured.get().getAsJsonObject("options").get("temperature").getAsInt());
             assertFalse(captured.get().get("think").getAsBoolean());
-            assertEquals(512,captured.get().getAsJsonObject("options").get("num_predict").getAsInt());
+            assertEquals(1024,captured.get().getAsJsonObject("options").get("num_predict").getAsInt());
         }finally{server.stop(0);}
     }
     @Test void thinkingRoleIsExplicitOnOllama() {
@@ -88,6 +88,15 @@ class AssistGatewayTest {
         // Body is validated by the end-to-end local mock test for the other role.
         assertEquals("http",built.uri().getScheme());
         assertFalse(built.headers().firstValue("Authorization").isPresent());
+    }
+    @Test void jsonModeIsBoundToPacketOnly() {
+        EvidencePrompt.Packet standard=EvidencePrompt.build("class A {}","explain","");
+        EvidencePrompt.Packet structured=EvidencePrompt.build("class A {}","explain","",true);
+        assertFalse(standard.strictJson);
+        assertTrue(structured.strictJson);
+        assertFalse(new AssistGateway().build(
+            local(AssistProfile.Provider.OLLAMA_LOCAL,12345),standard,false)
+            .headers().firstValue("Authorization").isPresent());
     }
     @Test void openAiCompatibleStructuredMessagesRoundTrip() throws Exception {
         HttpServer server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);

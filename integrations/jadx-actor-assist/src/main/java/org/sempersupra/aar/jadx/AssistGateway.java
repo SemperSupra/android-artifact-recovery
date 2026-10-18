@@ -82,8 +82,9 @@ public final class AssistGateway {
             json.addProperty("system",packet.system);
             JsonObject options = new JsonObject();
             options.addProperty("temperature",profile.temperature);
-            options.addProperty("num_predict",512);
+            options.addProperty("num_predict",1024);
             json.addProperty("think",profile.role == AssistProfile.Role.REASONING_CANDIDATE);
+            if (packet.strictJson) json.addProperty("format","json");
             json.add("options", options);
         } else {
             JsonArray messages=new JsonArray();

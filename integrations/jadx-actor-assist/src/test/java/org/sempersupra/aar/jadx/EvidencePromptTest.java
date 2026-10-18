@@ -21,6 +21,14 @@ class EvidencePromptTest {
         assertTrue(p.user.contains("LITERAL_CODE_END_MARKER"));
         assertEquals(1,p.user.split("CODE_END_UNTRUSTED_DATA",-1).length-1);
     }
+    @Test void structuredOutputIsExplicitOptIn() {
+        var ordinary=EvidencePrompt.build("class E {}","explain","");
+        var structured=EvidencePrompt.build("class E {}","explain","",true);
+        assertFalse(ordinary.strictJson);
+        assertTrue(structured.strictJson);
+        assertEquals(ordinary.sha256,structured.sha256);
+        assertEquals(ordinary.user,structured.user);
+    }
     @Test void rejectsUnboundedCodeAndArbitraryMode() {
         assertThrows(IllegalArgumentException.class, () ->
             EvidencePrompt.build("a".repeat(12001),"explain",""));
