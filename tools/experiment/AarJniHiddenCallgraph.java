@@ -30,6 +30,7 @@ public class AarJniHiddenCallgraph extends GhidraScript {
         if (exported == null || exported.isExternal())
             throw new IllegalStateException("JNI entry was not recovered");
         println("AAR_A3_ABI=" + args[0]);
+        println("AAR_A3_IMAGE_BASE=" + Long.toHexString(currentProgram.getImageBase().getOffset()));
         println("AAR_A3_JNI_ENTRY=" + Long.toHexString(exported.getEntryPoint().getOffset()));
         List<Function> targets = new ArrayList<Function>();
         for (Function callee : exported.getCalledFunctions(monitor)) {
