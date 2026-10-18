@@ -4,6 +4,8 @@ on:
     paths:
       - ".github/workflows/qualify-r8-obfuscation.yml"
       - "tools/experiment_r8_obfuscation.py"
+      - "tools/experiment_r8_factor_matrix.py"
+      - "tests/test_r8_factor_matrix.py"
       - "tests/test_r8_obfuscation.py"
       - "goldens/kotlin-dex/app/build.gradle.kts"
       - "goldens/kotlin-dex/app/aar-obfuscation-rules.pro"
@@ -26,14 +28,14 @@ jobs:
         with:
           gradle-version: '8.11.1'
       - name: Validate blinded mapping triage negative controls
-        run: python3 -m unittest -v tests.test_r8_obfuscation
+        run: python3 -m unittest -v tests.test_r8_obfuscation tests.test_r8_factor_matrix
       - name: Build unchanged baseline and separately R8-minified source-known fixture
         shell: bash
         working-directory: goldens/kotlin-dex
         run: |
           set -euo pipefail
           for attempt in 1 2; do
-            if gradle --no-daemon assembleRelease assembleObfuscated; then
+            if gradle --no-daemon assembleRelease assembleObfuscated assembleRenameOnly assembleShrinkOnly assembleShrinkOptimize; then
               echo "SOURCE_KNOWN_R8_BUILD=PASS;ATTEMPT=$attempt"
               exit 0
             fi
@@ -77,6 +79,42 @@ jobs:
                      for x in result["modes"].values())
           print("R8_OBFUSCATION_CALIBRATION=PASS;BLIND_RECOVERY=UNKNOWN")
           PY
+      - name: Controlled R8 flag sequence with no source-equivalence promotion
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk_dir="goldens/kotlin-dex/app/build/outputs/apk"
+          map_dir="goldens/kotlin-dex/app/build/outputs/mapping"
+          fixture () { find "$apk_dir/$1" -name '*.apk' -type f -print -quit; }
+          test -s "$map_dir/renameOnly/mapping.txt"
+          test -s "$map_dir/obfuscated/mapping.txt"
+          python3 tools/experiment_r8_factor_matrix.py \
+            --release-apk "$(fixture release)" \
+            --rename-only-apk "$(fixture renameOnly)" \
+            --shrink-only-apk "$(fixture shrinkOnly)" \
+            --shrink-optimize-apk "$(fixture shrinkOptimize)" \
+            --full-r8-apk "$(fixture obfuscated)" \
+            --rename-only-mapping "$map_dir/renameOnly/mapping.txt" \
+            --full-r8-mapping "$map_dir/obfuscated/mapping.txt" \
+            --jadx "$RUNNER_TEMP/jadx/bin/jadx" \
+            --out out/r8-factor-sequence
+          python3 - <<'PY'
+          import json
+          r=json.load(open("out/r8-factor-sequence/matrix.json"))
+          assert len(r["profiles"])==5 and len(r["contrasts"])==4
+          assert r["controls"]["dontshrink_can_limit_optimization"] is True
+          assert r["controls"]["best_recovery_mode"]=="UNKNOWN"
+          assert all(x["behavior"]=="UNKNOWN" for x in r["profiles"].values())
+          print("R8_FACTOR_SEQUENCE=PASS;BEHAVIOR=UNKNOWN;NO_3_AXIS_CAUSAL_CLAIM")
+          PY
+      - name: Retain aggregate nonbehavioral R8 factor observations
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aar-r8-controlled-factor-sequence
+          path: out/r8-factor-sequence/matrix.json
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Retain only bounded public metric receipt, not ground-truth mapping or decompiled sources
         if: always()
         uses: actions/upload-artifact@v4

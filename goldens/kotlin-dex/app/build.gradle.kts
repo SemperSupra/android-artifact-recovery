@@ -38,6 +38,23 @@ android {
             )
             matchingFallbacks += listOf("release")
         }
+        // R8's -dontshrink also affects optimization; these are a controlled
+        // *nested sequence*, not an orthogonal 2x2x2 factorial.
+        create("renameOnly") {
+            initWith(getByName("obfuscated"))
+            proguardFiles("aar-rename-only.pro")
+            matchingFallbacks += listOf("release")
+        }
+        create("shrinkOnly") {
+            initWith(getByName("obfuscated"))
+            proguardFiles("aar-shrink-only.pro")
+            matchingFallbacks += listOf("release")
+        }
+        create("shrinkOptimize") {
+            initWith(getByName("obfuscated"))
+            proguardFiles("aar-shrink-optimize.pro")
+            matchingFallbacks += listOf("release")
+        }
     }
 
     testOptions {
