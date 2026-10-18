@@ -75,35 +75,74 @@ jobs:
           assert digest.startswith(os.environ["OLLAMA_MODEL_DIGEST_PREFIX"]), "model digest drift"
           print("PINNED_MODEL="+tag+";DIGEST="+digest)
           PY
-      - name: Run same actual gateway with nonthinking and thinking configurations
+      - name: Repeat matched reasoning and nonthinking interviews, without model output execution
         run: |
           set -euo pipefail
           unset OPENROUTER_API_KEY OPENROUTER_MANAGEMENT_KEY DEEPSEEK_API_KEY GOOGLE_API_KEY || true
           mkdir -p /tmp/aar-jadx-interview
           fixture="$GITHUB_WORKSPACE/integrations/jadx-actor-assist/interviews/OverloadOracle.java"
-          for role in DETERMINISTIC_CANDIDATE REASONING_CANDIDATE; do
-            argv="$fixture $role $OLLAMA_MODEL_TAG /tmp/aar-jadx-interview/$role.json"
-            gradle -p integrations/jadx-actor-assist --no-daemon --quiet interviewCli "-PinterviewArgs=$argv"
-            test -s "/tmp/aar-jadx-interview/$role.json"
+          for rep in 1 2 3; do
+            output="/tmp/aar-jadx-interview/rep-$rep"
+            mkdir -p "$output"
+            for role in DETERMINISTIC_CANDIDATE REASONING_CANDIDATE; do
+              argv="$fixture $role $OLLAMA_MODEL_TAG $output/$role.json"
+              gradle -p integrations/jadx-actor-assist --no-daemon --quiet \
+                interviewCli "-PinterviewArgs=$argv"
+              test -s "$output/$role.json"
+            done
+            python3 integrations/jadx-actor-assist/interviews/verify_interview.py \
+              "$fixture" "$output" "$output/score.json"
           done
-          python3 integrations/jadx-actor-assist/interviews/verify_interview.py \
-            "$fixture" /tmp/aar-jadx-interview /tmp/aar-jadx-interview/score.json
           python3 - <<'PY'
           import json
-          d=json.load(open("/tmp/aar-jadx-interview/score.json"))
-          assert d["schema"]=="aar-jadx-local-interview-score/v1"
-          assert len(d["results"])==2
-          assert d["model_generalization"]=="UNKNOWN"
-          assert d["external_inference"]=="NOT_USED"
-          if all(x["status"]=="INCOMPLETE" for x in d["results"]):
-              raise SystemExit("BLOCKED_NO_LIVE_MODEL_OBSERVATION")
-          print("ACTUAL_JADX_GATEWAY_MODEL_INTERVIEW=OBSERVED;GENERALIZATION=UNKNOWN")
+          from collections import Counter
+          from pathlib import Path
+          base=Path("/tmp/aar-jadx-interview")
+          docs=[json.loads((base/("rep-"+str(i))/"score.json").read_text())
+                for i in (1,2,3)]
+          assert all(x["schema"]=="aar-jadx-local-interview-score/v1" for x in docs)
+          assert len({x["source_sha256"] for x in docs})==1
+          records=[r for rep,d in enumerate(docs,1) for r in d["results"]]
+          assert len(records)==6
+          profiles={}
+          for role in ("DETERMINISTIC_CANDIDATE","REASONING_CANDIDATE"):
+              xs=[r for r in records if r["role"]==role]
+              assert len(xs)==3
+              profiles[role]={
+                  "attempts":3,
+                  "pass":sum(bool(r["pass"]) for r in xs),
+                  "scoreable":sum(bool(r["scored"]) for r in xs),
+                  "runtime_output_correct":sum(bool(r["correct_output"]) for r in xs),
+                  "overload_correct":sum(bool(r["correct_signature"]) for r in xs),
+                  "source_name_uncertainty":sum(bool(r["uncertainty_calibrated"]) for r in xs),
+                  "valid_citations":sum(bool(r["valid_citations"]) for r in xs),
+                  "statuses":dict(Counter(r["status"] for r in xs)),
+                  "overload_kinds":dict(Counter(r["canonical_overload_kind"] for r in xs))
+              }
+          result={
+              "schema":"aar-jadx-replicated-configured-actor-receipt/v0",
+              "protocol":"THREE_MATCHED_REPEATS_SAME_PUBLIC_SYNTHETIC_JAVA_SOURCE",
+              "source_sha256":docs[0]["source_sha256"],
+              "configured_model":"qwen3:1.7b",
+              "provider":"OLLAMA_LOCAL",
+              "thinking_contract":"Ollama think false versus true",
+              "prompt_version":"aar-jadx-prompt-v2",
+              "scoring_policy":"JVM_OVERLOAD_CANONICALIZATION_V1",
+              "profiles":profiles,
+              "heldout_r8_kotlin":"NOT_RUN",
+              "generalized_actor_qualification":"NOT_ADMITTED",
+              "external_inference":"NOT_USED"
+          }
+          (base/"aggregate.json").write_text(json.dumps(result,sort_keys=True,indent=2)+"\n")
+          print("AAR_REPLICATED_CPU_ACTOR_INTERVIEWS="+json.dumps(profiles,sort_keys=True))
           PY
-      - name: Retain only bounded scoring; no raw model output
+      - name: Retain aggregate and per-rep scored receipt only, no model text
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: aar-jadx-qwen3-cpu-role-interview
-          path: /tmp/aar-jadx-interview/score.json
+          name: aar-jadx-qwen3-cpu-replicated-interview
+          path: |
+            /tmp/aar-jadx-interview/aggregate.json
+            /tmp/aar-jadx-interview/rep-*/score.json
           if-no-files-found: ignore
           retention-days: 7
