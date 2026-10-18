@@ -6,6 +6,8 @@ on:
       - "tools/experiment_r8_obfuscation.py"
       - "tools/experiment_r8_factor_matrix.py"
       - "tests/test_r8_factor_matrix.py"
+      - "tests/test_r8_behavior_oracle.py"
+      - "tools/experiment_r8_behavior_oracle.py"
       - "tests/test_r8_obfuscation.py"
       - "goldens/kotlin-dex/app/build.gradle.kts"
       - "goldens/kotlin-dex/app/aar-obfuscation-rules.pro"
@@ -28,7 +30,7 @@ jobs:
         with:
           gradle-version: '8.11.1'
       - name: Validate blinded mapping triage negative controls
-        run: python3 -m unittest -v tests.test_r8_obfuscation tests.test_r8_factor_matrix
+        run: python3 -m unittest -v tests.test_r8_obfuscation tests.test_r8_factor_matrix tests.test_r8_behavior_oracle
       - name: Build unchanged baseline and separately R8-minified source-known fixture
         shell: bash
         working-directory: goldens/kotlin-dex
@@ -107,6 +109,44 @@ jobs:
           assert all(x["behavior"]=="UNKNOWN" for x in r["profiles"].values())
           print("R8_FACTOR_SEQUENCE=PASS;BEHAVIOR=UNKNOWN;NO_3_AXIS_CAUSAL_CLAIM")
           PY
+      - name: Score unmodified recovered Java against sealed 10-vector oracle
+        shell: bash
+        run: |
+          set -euo pipefail
+          klass="$(find goldens/kotlin-dex/app/build -type f -name GoldenRecordFingerprint.class -print -quit)"
+          test -n "$klass"
+          root="$(python3 - "$klass" <<'PY'
+          import pathlib,sys
+          print(pathlib.Path(sys.argv[1]).resolve().parents[5])
+          PY
+          )"
+          stdlib="$(find "$HOME/.gradle/caches/modules-2/files-2.1/org.jetbrains.kotlin/kotlin-stdlib" -name 'kotlin-stdlib-2.0.21.jar' -print -quit)"
+          annotations="$(find "$HOME/.gradle/caches/modules-2/files-2.1/org.jetbrains/annotations" -name '*.jar' ! -name '*sources*' -print -quit || true)"
+          test -d "$root" && test -s "$stdlib"
+          python3 tools/experiment_r8_behavior_oracle.py \
+            --original-classes "$root" \
+            --kotlin-stdlib "$stdlib" --annotations "$annotations" \
+            --harness tests/fixtures/GoldenFingerprintMatrixHarness.java \
+            --recovered-root out/r8-factor-sequence --out out/r8-behavior
+          python3 - <<'PY'
+          import json
+          x=json.load(open("out/r8-behavior/result.json"))
+          assert x["schema"]=="aar-r8-raw-java-oracle/v0"
+          assert x["source_known_oracle_vectors"]==10
+          assert x["original_r8_dex_behavior"]=="NOT_TESTED"
+          assert x["methods"]["rename-only"]["unknown"]==10
+          assert x["methods"]["full-r8"]["unknown"]==10
+          assert x["generalized_recovery_qualified"] is False
+          print("R8_RAW_JAVA_BEHAVIOR_SCORER=PASS;NO_GENERALIZED_RECOVERY_CLAIM")
+          PY
+      - name: Retain scored ten-vector public synthetic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aar-r8-raw-java-behavior
+          path: out/r8-behavior/result.json
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Retain aggregate nonbehavioral R8 factor observations
         if: always()
         uses: actions/upload-artifact@v4
