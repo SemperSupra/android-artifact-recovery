@@ -78,14 +78,15 @@ def evaluate(probe, oracle, elf, abi):
     if digest(elf)!=oracle["elf_sha256"]:
         raise ValueError("Ghidra input digest not bound to source oracle")
     def one(tag):
-        values=re.findall(r"(?m)^AAR_A3_"+tag+r"=([^\r\n]+)$",probe)
+        values=re.findall(r"AAR_A3_"+tag+r"=([^\s]+)",probe)
         if len(values)!=1:raise ValueError("missing/duplicate Ghidra "+tag)
         return values[0]
-    if one("ABI")!=abi or int(one("JNI_ENTRY"),16)!=oracle["jni_address"]:
+    base=int(one("IMAGE_BASE"),16)
+    if one("ABI")!=abi or int(one("JNI_ENTRY"),16)-base!=oracle["jni_address"]:
         raise ValueError("wrong recovered JNI export or ABI")
     observed={}
-    for addr, count, decompiled in re.findall(r"(?m)^AAR_A3_CALLEE=([0-9a-f]+)\|(\d+)\|(true|false)$",probe):
-        n=int(addr,16)
+    for addr, count, decompiled in re.findall(r"AAR_A3_CALLEE=([0-9a-f]+)\|(\d+)\|(true|false)",probe):
+        n=int(addr,16)-base
         if n in observed or int(count)<1:raise ValueError("duplicate/empty function")
         observed[n]=decompiled=="true"
     if len(observed)!=int(one("INTERNAL_CALLS")) or len(observed)>16:
