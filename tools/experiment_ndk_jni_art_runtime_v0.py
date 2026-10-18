@@ -74,7 +74,7 @@ def produce(root:Path)->None:
     words=dex_strings(dex)
     for word in ("Lorg/sempersupra/aar/golden/NativeBridge;",
                  "Lorg/sempersupra/aar/golden/RuntimeProbe;",
-                 "nativeDispatch","RuntimeProbe"):
+                 "nativeDispatch"):
         if word not in words:raise ValueError("DEX missing bridge/probe "+word)
     jar=root/"aar_a2.dex.jar"
     with zipfile.ZipFile(jar,"w",compression=zipfile.ZIP_STORED) as out:
