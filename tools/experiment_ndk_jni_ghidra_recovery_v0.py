@@ -24,7 +24,9 @@ def cmd(*args):
                           check=True,timeout=120).stdout
 def digest(p):
     return hashlib.sha256(Path(p).read_bytes()).hexdigest()
-def build(root, abi):
+def build(root, abi, optimization="O1"):
+    if optimization not in ("O0", "O1", "O2"):
+        raise ValueError("unadmitted NDK optimizer treatment")
     if abi not in ABIS: raise ValueError("unknown ABI")
     root.mkdir(parents=True,exist_ok=True)
     ndk=ndk_root()
@@ -35,7 +37,7 @@ def build(root, abi):
     cpp.write_text(CPP,encoding="utf-8")
     unstripped=root/(abi+"-oracle-unstripped.so")
     stripped=root/(abi+"-ghidra-stripped.so")
-    cmd(bin/"clang++","--target="+ABIS[abi][1],"-nostdlib++","-g","-O1",
+    cmd(bin/"clang++","--target="+ABIS[abi][1],"-nostdlib++","-g","-"+optimization,
         "-fPIC","-fvisibility=hidden","-fno-exceptions","-ffunction-sections",
         "-fdata-sections","-shared","-Wl,--gc-sections","-Wl,--build-id=none",
         "-o",unstripped,cpp)
@@ -63,7 +65,7 @@ def build(root, abi):
     receipt={"schema":1,"abi":abi,"elf_machine":ABIS[abi][0],
              "elf_sha256":digest(stripped),
              "cpp_sha256":hashlib.sha256(CPP.encode()).hexdigest(),
-             "ndk":"27.3.13750724","optimization":"-O1",
+             "ndk":"27.3.13750724","optimization":"-"+optimization,
              "jni_address":oracle[JNI],
              "helper_truth":{k:oracle[k] for k in SYMBOLS},
              "published":False}
@@ -107,11 +109,12 @@ def main():
     p=argparse.ArgumentParser()
     p.add_argument("--root",type=Path,required=True)
     p.add_argument("--abi",choices=ABIS,required=True)
+    p.add_argument("--optimization",choices=("O0","O1","O2"),default="O1")
     g=p.add_mutually_exclusive_group(required=True)
     g.add_argument("--build",action="store_true")
     g.add_argument("--verify",type=Path)
     a=p.parse_args()
-    if a.build:build(a.root,a.abi)
+    if a.build:build(a.root,a.abi,a.optimization)
     else:
         oracle=json.loads((a.root/(a.abi+"-private-oracle.json")).read_text())
         result=evaluate(a.verify.read_text(errors="replace"),oracle,
