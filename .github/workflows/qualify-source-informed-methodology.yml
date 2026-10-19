@@ -1,0 +1,114 @@
+name: Qualify source-informed methodology evidence
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/qualify-source-informed-methodology.yml'
+      - 'tools/qualify_method_comparison.py'
+      - 'tools/experiment_ndk_jni_ghidra_recovery_v0.py'
+      - 'tools/experiment/AarJniHiddenCallgraph.java'
+      - 'tests/test_ndk_jni_ghidra_recovery_v0.py'
+      - 'tools/recover_ndk_jni_semantics_v0.py'
+      - 'tools/verify_ndk_jni_semantics_v0.py'
+      - 'tools/experiment/AarJniSemanticEvidence.java'
+      - 'tests/test_ndk_jni_semantics_v0.py'
+      - 'tools/experiment_ndk_jni_optimizer_holdout_v0.py'
+      - 'tests/test_ndk_jni_optimizer_holdout_v0.py'
+      - 'tools/experiment_ndk_jni_controlflow_v0.py'
+      - 'tools/verify_ndk_jni_controlflow_v0.py'
+      - 'tests/test_ndk_jni_controlflow_v0.py'
+      - 'tests/test_qualify_method_comparison.py'
+      - 'docs/recovery/source-informed-methodology-rdte-2026-10-13.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  public-synthetic-qualification:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v7
+      - name: Verify synthetic evidence comparator and existing foundation
+        run: |
+          python3 -m unittest -v \
+            tests/test_qualify_method_comparison.py \
+            tests/test_characterize_android_artifact.py \
+            tests/test_component_correspondence.py
+      - name: A3 static oracle negative controls (no NDK or Ghidra)
+        run: python3 tests/test_ndk_jni_ghidra_recovery_v0.py
+      - name: A4 source-blind semantic IR and independent oracle negative controls
+        run: python3 tests/test_ndk_jni_semantics_v0.py
+      - name: A5 optimization-heldout UNKNOWN and wrong-semantics controls
+        run: python3 tests/test_ndk_jni_optimizer_holdout_v0.py
+      - name: A6 disjoint native branching/looping oracle controls
+        run: python3 tests/test_ndk_jni_controlflow_v0.py
+      - name: Scope attestation
+        run: |
+          echo "Public-safe source-known fixtures and stdlib tests only."
+          echo "No private APK, secrets, authenticated state, or proprietary data."
+
+  a6-jni-disjoint-one-shot:
+    name: A6 novel native control-flow Ghidra abstention challenge
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Run source-known fake/UNKNOWN and behavior negatives
+        run: python3 tests/test_ndk_jni_controlflow_v0.py
+      - name: Build only new source-owned branching and looping JNI ELF with pinned NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/a6"
+          for abi in x86_64 aarch64; do
+            python3 tools/experiment_ndk_jni_ghidra_recovery_v0.py \
+              --build --abi "$abi" --optimization O0 --fixture-kind controlflow \
+              --root "$RUNNER_TEMP/a6"
+          done
+      - name: Retrieve pinned official Ghidra 12.1.4
+        shell: bash
+        run: |
+          set -euo pipefail
+          zip="$RUNNER_TEMP/ghidra_12.1.4_PUBLIC_20260921.zip"
+          curl -fL --retry 3 --max-time 420 \
+            https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.1.4_build/ghidra_12.1.4_PUBLIC_20260921.zip -o "$zip"
+          echo "ddac49f903da9d5bac833e5cc79395098b9c33cfd3279be5f31bd00387d2d4db  $zip" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/a6-ghidra"
+          unzip -q "$zip" -d "$RUNNER_TEMP/a6-ghidra"
+          gh="$RUNNER_TEMP/a6-ghidra/ghidra_12.1.4_PUBLIC"
+          test -x "$gh/support/analyzeHeadless"
+          echo "A6_GHIDRA=$gh" >> "$GITHUB_ENV"
+      - name: Read-only Ghidra source-blind projection and separate independent evaluation
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/a6-projects"
+          for abi in x86_64 aarch64; do
+            "$A6_GHIDRA/support/analyzeHeadless" \
+              "$RUNNER_TEMP/a6-projects" "aar_a6_$abi" \
+              -import "$RUNNER_TEMP/a6/$abi-ghidra-stripped.so" \
+              -scriptPath "$GITHUB_WORKSPACE/tools/experiment" \
+              -postScript AarJniSemanticEvidence.java "$abi" \
+              -analysisTimeoutPerFile 120 -max-cpu 2 -deleteProject \
+              2>&1 | tee "$RUNNER_TEMP/a6/$abi-ghidra.log"
+            grep -q 'AAR_A4_COUNT=2' "$RUNNER_TEMP/a6/$abi-ghidra.log"
+            python3 tools/verify_ndk_jni_controlflow_v0.py \
+              --root "$RUNNER_TEMP/a6" --abi "$abi" \
+              --log "$RUNNER_TEMP/a6/$abi-ghidra.log" \
+              --out "$RUNNER_TEMP/a6/$abi-controlflow-result.json"
+          done
+      - name: Publish aggregate only; no ELF, Ghidra C, source truth, vectors, or operator key
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: a6-disjoint-aggregate-${{ github.run_id }}
+          path: ${{ runner.temp }}/a6/*-controlflow-result.json
+          if-no-files-found: ignore
+          retention-days: 14

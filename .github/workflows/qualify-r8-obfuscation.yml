@@ -1,0 +1,262 @@
+name: Qualify R8 obfuscation detection and blind JADX variants
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/qualify-r8-obfuscation.yml"
+      - "tools/experiment_r8_obfuscation.py"
+      - "tools/experiment_r8_factor_matrix.py"
+      - "tests/test_r8_factor_matrix.py"
+      - "tests/test_r8_behavior_oracle.py"
+      - "tools/experiment_r8_behavior_oracle.py"
+      - "tools/experiment_jadx_builtin_plugin_options.py"
+      - "tests/test_jadx_builtin_plugin_options.py"
+      - "tools/experiment_r8_repair_isolation.py"
+      - "tests/test_r8_repair_isolation.py"
+      - "tests/test_r8_obfuscation.py"
+      - "goldens/kotlin-dex/app/build.gradle.kts"
+      - "goldens/kotlin-dex/app/aar-obfuscation-rules.pro"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  source-known-r8-obfuscation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 16
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Validate blinded mapping triage negative controls
+        run: python3 -m unittest -v tests.test_r8_obfuscation tests.test_r8_factor_matrix tests.test_r8_behavior_oracle tests.test_r8_repair_isolation tests.test_jadx_builtin_plugin_options
+      - name: Build unchanged baseline and separately R8-minified source-known fixture
+        shell: bash
+        working-directory: goldens/kotlin-dex
+        run: |
+          set -euo pipefail
+          for attempt in 1 2; do
+            if gradle --no-daemon assembleRelease assembleObfuscated assembleRenameOnly assembleShrinkOnly assembleShrinkOptimize; then
+              echo "SOURCE_KNOWN_R8_BUILD=PASS;ATTEMPT=$attempt"
+              exit 0
+            fi
+            if [ "$attempt" = 1 ]; then sleep 8; fi
+          done
+          echo "SOURCE_KNOWN_R8_BUILD=BLOCKED"
+          exit 1
+      - name: Install precise JADX 1.5.6 binary already used by AAR
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --max-time 120 \
+            https://github.com/skylot/jadx/releases/download/v1.5.6/jadx-1.5.6.zip \
+            -o "$RUNNER_TEMP/jadx.zip"
+          echo "545ea2be9c242511bc145755cf4bda2485ade42966e096f8b4d3da2a230e8974  $RUNNER_TEMP/jadx.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/jadx.zip" -d "$RUNNER_TEMP/jadx"
+      - name: Compare source-known R8 obfuscated APK against unchanged baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          baseline="$(find goldens/kotlin-dex/app/build/outputs/apk/release -type f -name '*.apk' -print -quit)"
+          candidate="$(find goldens/kotlin-dex/app/build/outputs/apk/obfuscated -type f -name '*.apk' -print -quit)"
+          mapping="goldens/kotlin-dex/app/build/outputs/mapping/obfuscated/mapping.txt"
+          test -s "$baseline" && test -s "$candidate" && test -s "$mapping"
+          python3 tools/experiment_r8_obfuscation.py \
+            --baseline-apk "$baseline" \
+            --candidate-apk "$candidate" \
+            --mapping "$mapping" \
+            --jadx "$RUNNER_TEMP/jadx/bin/jadx" \
+            --out out/r8-obfuscation
+          python3 - <<'PY'
+          import json
+          result=json.load(open("out/r8-obfuscation/interview.json"))
+          assert result["schema"]=="aar-r8-obfuscation-interview/v0"
+          assert result["calibration"]["known_oracle_class_renamed"] is True
+          assert result["calibration"]["renamed_classes"]>=1
+          assert len(result["modes"])==6
+          assert result["oracle_mapping_visible_to_candidates"] is False
+          assert result["selection"]=="NO_BEST_MODE_WITHOUT_INDEPENDENT_BEHAVIORAL_ORACLE"
+          assert all(x["source_equivalence"]=="UNKNOWN" and x["recovered_behavior"]=="UNKNOWN"
+                     for x in result["modes"].values())
+          print("R8_OBFUSCATION_CALIBRATION=PASS;BLIND_RECOVERY=UNKNOWN")
+          PY
+      - name: Controlled R8 flag sequence with no source-equivalence promotion
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk_dir="goldens/kotlin-dex/app/build/outputs/apk"
+          map_dir="goldens/kotlin-dex/app/build/outputs/mapping"
+          fixture () { find "$apk_dir/$1" -name '*.apk' -type f -print -quit; }
+          test -s "$map_dir/renameOnly/mapping.txt"
+          test -s "$map_dir/obfuscated/mapping.txt"
+          python3 tools/experiment_r8_factor_matrix.py \
+            --release-apk "$(fixture release)" \
+            --rename-only-apk "$(fixture renameOnly)" \
+            --shrink-only-apk "$(fixture shrinkOnly)" \
+            --shrink-optimize-apk "$(fixture shrinkOptimize)" \
+            --full-r8-apk "$(fixture obfuscated)" \
+            --rename-only-mapping "$map_dir/renameOnly/mapping.txt" \
+            --full-r8-mapping "$map_dir/obfuscated/mapping.txt" \
+            --jadx "$RUNNER_TEMP/jadx/bin/jadx" \
+            --out out/r8-factor-sequence
+          python3 - <<'PY'
+          import json
+          r=json.load(open("out/r8-factor-sequence/matrix.json"))
+          assert len(r["profiles"])==5 and len(r["contrasts"])==4
+          assert r["controls"]["dontshrink_can_limit_optimization"] is True
+          assert r["controls"]["best_recovery_mode"]=="UNKNOWN"
+          assert all(x["behavior"]=="UNKNOWN" for x in r["profiles"].values())
+          print("R8_FACTOR_SEQUENCE=PASS;BEHAVIOR=UNKNOWN;NO_3_AXIS_CAUSAL_CLAIM")
+          PY
+      - name: Score unmodified recovered Java against sealed 10-vector oracle
+        shell: bash
+        run: |
+          set -euo pipefail
+          klass="$(find goldens/kotlin-dex/app/build -type f -name GoldenRecordFingerprint.class -print -quit)"
+          test -n "$klass"
+          root="$(python3 - "$klass" <<'PY'
+          import pathlib,sys
+          print(pathlib.Path(sys.argv[1]).resolve().parents[5])
+          PY
+          )"
+          stdlib="$(find "$HOME/.gradle/caches/modules-2/files-2.1/org.jetbrains.kotlin/kotlin-stdlib" -name 'kotlin-stdlib-2.0.21.jar' -print -quit)"
+          annotations="$(find "$HOME/.gradle/caches/modules-2/files-2.1/org.jetbrains/annotations" -name '*.jar' ! -name '*sources*' -print -quit || true)"
+          test -d "$root" && test -s "$stdlib"
+          python3 tools/experiment_r8_behavior_oracle.py \
+            --original-classes "$root" \
+            --kotlin-stdlib "$stdlib" --annotations "$annotations" \
+            --harness tests/fixtures/GoldenFingerprintMatrixHarness.java \
+            --recovered-root out/r8-factor-sequence --out out/r8-behavior
+          python3 - <<'PY'
+          import json
+          x=json.load(open("out/r8-behavior/result.json"))
+          assert x["schema"]=="aar-r8-raw-java-oracle/v0"
+          assert x["source_known_oracle_vectors"]==10
+          assert x["original_r8_dex_behavior"]=="NOT_TESTED"
+          assert x["methods"]["rename-only"]["unknown"]==10
+          assert x["methods"]["full-r8"]["unknown"]==10
+          assert x["generalized_recovery_qualified"] is False
+          print("R8_RAW_JAVA_BEHAVIOR_SCORER=PASS;NO_GENERALIZED_RECOVERY_CLAIM")
+          PY
+      - name: Test existing bounded Kotlin repair as separately identified intervention
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/experiment_r8_repair_isolation.py \
+            --raw out/r8-factor-sequence --out out/r8-repair-intervention
+          klass="$(find goldens/kotlin-dex/app/build -type f -name GoldenRecordFingerprint.class -print -quit)"
+          test -n "$klass"
+          root="$(python3 - "$klass" <<'PY'
+          import pathlib,sys
+          print(pathlib.Path(sys.argv[1]).resolve().parents[5])
+          PY
+          )"
+          stdlib="$(find "$HOME/.gradle/caches/modules-2/files-2.1/org.jetbrains.kotlin/kotlin-stdlib" -name 'kotlin-stdlib-2.0.21.jar' -print -quit)"
+          annotations="$(find "$HOME/.gradle/caches/modules-2/files-2.1/org.jetbrains/annotations" -name '*.jar' ! -name '*sources*' -print -quit || true)"
+          test -d "$root" && test -s "$stdlib"
+          python3 tools/experiment_r8_behavior_oracle.py \
+            --original-classes "$root" --kotlin-stdlib "$stdlib" \
+            --annotations "$annotations" \
+            --harness tests/fixtures/GoldenFingerprintMatrixHarness.java \
+            --recovered-root out/r8-repair-intervention/sources \
+            --out out/r8-repaired-behavior
+          python3 - <<'PY'
+          import json
+          raw=json.load(open("out/r8-behavior/result.json"))
+          staged=json.load(open("out/r8-repair-intervention/intervention.json"))
+          new=json.load(open("out/r8-repaired-behavior/result.json"))
+          assert len(staged["profiles"])==5
+          assert staged["mutation_of_raw_jadx"] is False
+          assert new["generalized_recovery_qualified"] is False
+          for k in ("release","shrink-only","shrink-optimize"):
+              a=raw["methods"][k]
+              b=new["methods"][k]
+              change=staged["profiles"][k]
+              print("R8_RAW_VS_REPAIR",
+                    json.dumps({"variant":k,"repair":change["state"],
+                                "raw_status":a["state"],"candidate_status":b["state"],
+                                "matched":b["matched"],"unknown":b["unknown"]},
+                               sort_keys=True))
+              if b["state"]=="MATCH_10_VECTORS":
+                  assert change["repair_applied"] is True
+          print("R8_REPAIR_ISOLATION=PASS;GENERALIZATION=UNKNOWN")
+          PY
+      - name: Retain scoped repair and behavior delta receipts only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aar-r8-bounded-repair-delta
+          path: |
+            out/r8-repair-intervention/intervention.json
+            out/r8-repaired-behavior/result.json
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Retain scored ten-vector public synthetic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aar-r8-raw-java-behavior
+          path: out/r8-behavior/result.json
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Pin and inspect JADX source behind the bundled Kotlin Metadata plugin
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/source-pinned-jadx"
+          mkdir "$src"
+          git -C "$src" init -q
+          git -C "$src" remote add origin https://github.com/skylot/jadx.git
+          git -C "$src" fetch --depth=1 --filter=blob:none origin 28ff15e4ae69950aebea110a13e5ab895d234dfc
+          git -C "$src" checkout -q FETCH_HEAD --             jadx-plugins/jadx-kotlin-metadata/src/main/kotlin/jadx/plugins/kotlin/metadata/KotlinMetadataOptions.kt             jadx-plugins/jadx-kotlin-metadata/src/main/kotlin/jadx/plugins/kotlin/metadata/pass/KotlinMetadataDecompilePass.kt             jadx-core/src/main/java/jadx/core/dex/visitors/MethodInvokeVisitor.java
+          test "$(git -C "$src" hash-object jadx-plugins/jadx-kotlin-metadata/src/main/kotlin/jadx/plugins/kotlin/metadata/KotlinMetadataOptions.kt)" = "ab2cb8a1e89357d29a212bd50503e787db735581"
+          test "$(git -C "$src" hash-object jadx-plugins/jadx-kotlin-metadata/src/main/kotlin/jadx/plugins/kotlin/metadata/pass/KotlinMetadataDecompilePass.kt)" = "c9c520625870e12c8ee35a6dc8d059dbbed190ec"
+          test "$(git -C "$src" hash-object jadx-core/src/main/java/jadx/core/dex/visitors/MethodInvokeVisitor.java)" = "2b681d211c1b99b3e66b78af056d31110b69bd6c"
+          echo "JADX_1_5_6_SOURCE_PIN=PASS"
+      - name: Test source-informed built-in Kotlin Metadata plugin options
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixture () { find "goldens/kotlin-dex/app/build/outputs/apk/$1" -name '*.apk' -type f -print -quit; }
+          stdlib="$(find "$HOME/.gradle/caches/modules-2/files-2.1/org.jetbrains.kotlin/kotlin-stdlib" -name 'kotlin-stdlib-2.0.21.jar' -print -quit)"
+          test -s "$stdlib"
+          python3 tools/experiment_jadx_builtin_plugin_options.py             --shrink-only-apk "$(fixture shrinkOnly)"             --shrink-optimize-apk "$(fixture shrinkOptimize)"             --jadx "$RUNNER_TEMP/jadx/bin/jadx"             --kotlin-stdlib "$stdlib"             --out out/jadx-builtin-plugin-probes
+          python3 - <<'PY'
+          import json
+          x=json.load(open("out/jadx-builtin-plugin-probes/probe.json"))
+          assert x["schema"]=="aar-jadx-source-pinned-kotlin-plugin-probe/v0"
+          assert x["third_party_plugins_installed"] is False
+          assert x["R8_mapping_given_to_jadx"] is False
+          assert len(x["results"])==2 and all(len(y)==4 for y in x["results"].values())
+          assert x["behavior"]=="NOT_TESTED" and x["plugin_adoption"]=="HOLD"
+          print("JADX_KOTLIN_PLUGIN_OPTION_SWEEP=PASS;SEMANTICS=UNKNOWN")
+          PY
+      - name: Retain only source-pinned plugin diagnostics and hashes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aar-jadx-builtin-kotlin-plugin-sweep
+          path: out/jadx-builtin-plugin-probes/probe.json
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Retain aggregate nonbehavioral R8 factor observations
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aar-r8-controlled-factor-sequence
+          path: out/r8-factor-sequence/matrix.json
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Retain only bounded public metric receipt, not ground-truth mapping or decompiled sources
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aar-r8-public-blind-variant-metrics
+          path: out/r8-obfuscation/interview.json
+          if-no-files-found: ignore
+          retention-days: 7

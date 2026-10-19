@@ -1,0 +1,56 @@
+name: Calibrate D8 and JADX source-known methodology
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/qualify-d8-jadx-methodology.yml'
+      - 'tools/experiment_d8_jadx_calibration.py'
+      - 'tools/qualify_method_comparison.py'
+      - 'goldens/methodology/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  d8-jadx-calibration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Locate preinstalled Android D8 and pin JADX release bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk_root="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          d8="$(find "$sdk_root/build-tools" -maxdepth 2 -type f -name d8 | sort -V | tail -n1)"
+          test -x "$d8"
+          echo "D8=$d8" >> "$GITHUB_ENV"
+          curl -fL --retry 3 --max-time 120 \
+            https://github.com/skylot/jadx/releases/download/v1.5.6/jadx-1.5.6.zip \
+            -o "$RUNNER_TEMP/jadx.zip"
+          echo '545ea2be9c242511bc145755cf4bda2485ade42966e096f8b4d3da2a230e8974  '"$RUNNER_TEMP/jadx.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/jadx.zip" -d "$RUNNER_TEMP/jadx"
+          echo "JADX=$RUNNER_TEMP/jadx/bin/jadx" >> "$GITHUB_ENV"
+      - name: Run D8 debug/release and independent JADX raw recovery calibration
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/experiment_d8_jadx_calibration.py \
+            --source goldens/methodology/src/org/sempersupra/aar/golden/methodology/BranchAndFold.java \
+            --java "$(command -v java)" \
+            --javac "$(command -v javac)" \
+            --jar "$(command -v jar)" \
+            --d8 "$D8" --jadx "$JADX" \
+            --out out/methodology-calibration
+      - name: Preserve public fixture/calibration evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: aar-public-d8-jadx-calibration
+          path: out/methodology-calibration/calibration.json
+          if-no-files-found: warn
+          retention-days: 7
