@@ -24,7 +24,14 @@ def cmd(*args):
                           check=True,timeout=120).stdout
 def digest(p):
     return hashlib.sha256(Path(p).read_bytes()).hexdigest()
-def build(root, abi, optimization="O1"):
+def build(root, abi, optimization="O1", fixture_kind="baseline"):
+    if fixture_kind not in ("baseline", "controlflow"):
+        raise ValueError("unadmitted source-owned native fixture")
+    if fixture_kind == "controlflow":
+        from experiment_ndk_jni_controlflow_v0 import CPP_CONTROL_FLOW
+        fixture_cpp = CPP_CONTROL_FLOW
+    else:
+        fixture_cpp = CPP
     if optimization not in ("O0", "O1", "O2"):
         raise ValueError("unadmitted NDK optimizer treatment")
     if abi not in ABIS: raise ValueError("unknown ABI")
@@ -34,7 +41,7 @@ def build(root, abi, optimization="O1"):
     if len(bins)!=1: raise ValueError("ambiguous pinned clang")
     bin=bins[0].parent
     cpp=root/"fixture.cpp"
-    cpp.write_text(CPP,encoding="utf-8")
+    cpp.write_text(fixture_cpp,encoding="utf-8")
     unstripped=root/(abi+"-oracle-unstripped.so")
     stripped=root/(abi+"-ghidra-stripped.so")
     cmd(bin/"clang++","--target="+ABIS[abi][1],"-nostdlib++","-g","-"+optimization,
@@ -64,7 +71,8 @@ def build(root, abi, optimization="O1"):
         raise ValueError("native ABI dependency not self-contained for JNI fixture")
     receipt={"schema":1,"abi":abi,"elf_machine":ABIS[abi][0],
              "elf_sha256":digest(stripped),
-             "cpp_sha256":hashlib.sha256(CPP.encode()).hexdigest(),
+             "cpp_sha256":hashlib.sha256(fixture_cpp.encode()).hexdigest(),
+             "fixture_kind":fixture_kind,
              "ndk":"27.3.13750724","optimization":"-"+optimization,
              "jni_address":oracle[JNI],
              "helper_truth":{k:oracle[k] for k in SYMBOLS},
@@ -110,11 +118,12 @@ def main():
     p.add_argument("--root",type=Path,required=True)
     p.add_argument("--abi",choices=ABIS,required=True)
     p.add_argument("--optimization",choices=("O0","O1","O2"),default="O1")
+    p.add_argument("--fixture-kind",choices=("baseline","controlflow"),default="baseline")
     g=p.add_mutually_exclusive_group(required=True)
     g.add_argument("--build",action="store_true")
     g.add_argument("--verify",type=Path)
     a=p.parse_args()
-    if a.build:build(a.root,a.abi,a.optimization)
+    if a.build:build(a.root,a.abi,a.optimization,a.fixture_kind)
     else:
         oracle=json.loads((a.root/(a.abi+"-private-oracle.json")).read_text())
         result=evaluate(a.verify.read_text(errors="replace"),oracle,
