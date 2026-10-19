@@ -11,6 +11,8 @@ on:
       - 'tools/verify_ndk_jni_semantics_v0.py'
       - 'tools/experiment/AarJniSemanticEvidence.java'
       - 'tests/test_ndk_jni_semantics_v0.py'
+      - 'tools/experiment_ndk_jni_optimizer_holdout_v0.py'
+      - 'tests/test_ndk_jni_optimizer_holdout_v0.py'
       - 'tests/test_qualify_method_comparison.py'
       - 'docs/recovery/source-informed-methodology-rdte-2026-10-13.md'
   workflow_dispatch:
@@ -34,7 +36,84 @@ jobs:
         run: python3 tests/test_ndk_jni_ghidra_recovery_v0.py
       - name: A4 source-blind semantic IR and independent oracle negative controls
         run: python3 tests/test_ndk_jni_semantics_v0.py
+      - name: A5 optimization-heldout UNKNOWN and wrong-semantics controls
+        run: python3 tests/test_ndk_jni_optimizer_holdout_v0.py
       - name: Scope attestation
         run: |
           echo "Public-safe source-known fixtures and stdlib tests only."
           echo "No private APK, secrets, authenticated state, or proprietary data."
+
+  a5-optimizer-heldout-native:
+    name: A5 pinned NDK -O0 native Ghidra semantics transfer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Adversarial static operator/UNKNOWN controls
+        run: |
+          python3 tests/test_ndk_jni_semantics_v0.py
+          python3 tests/test_ndk_jni_optimizer_holdout_v0.py
+      - name: Build native -O1 and predeclared held-out -O0 separately for two ABIs
+        shell: bash
+        run: |
+          set -euo pipefail
+          for abi in x86_64 aarch64; do
+            for opt in O1 O0; do
+              dest="$RUNNER_TEMP/a5/$opt/$abi"
+              mkdir -p "$dest"
+              python3 tools/experiment_ndk_jni_ghidra_recovery_v0.py --build \
+                --abi "$abi" --optimization "$opt" --root "$dest"
+            done
+            python3 tools/experiment_ndk_jni_optimizer_holdout_v0.py \
+              --baseline "$RUNNER_TEMP/a5/O1/$abi" --heldout "$RUNNER_TEMP/a5/O0/$abi" \
+              --abi "$abi" --out "$RUNNER_TEMP/a5/$abi-code-distinction.json"
+          done
+      - name: Verify official Ghidra 12.1.4 exact release SHA256
+        shell: bash
+        run: |
+          set -euo pipefail
+          zip="$RUNNER_TEMP/ghidra_12.1.4_PUBLIC_20260921.zip"
+          curl -fL --retry 3 --max-time 420 \
+            https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.1.4_build/ghidra_12.1.4_PUBLIC_20260921.zip -o "$zip"
+          echo "ddac49f903da9d5bac833e5cc79395098b9c33cfd3279be5f31bd00387d2d4db  $zip" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/a5-ghidra"
+          unzip -q "$zip" -d "$RUNNER_TEMP/a5-ghidra"
+          gh="$RUNNER_TEMP/a5-ghidra/ghidra_12.1.4_PUBLIC"
+          test -x "$gh/support/analyzeHeadless"
+          echo "A5_GHIDRA=$gh" >> "$GITHUB_ENV"
+      - name: Read-only stripped held-out Ghidra; frozen A4 IR parser and held evaluator
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/a5-projects"
+          for abi in x86_64 aarch64; do
+            dest="$RUNNER_TEMP/a5/O0/$abi"
+            "$A5_GHIDRA/support/analyzeHeadless" \
+              "$RUNNER_TEMP/a5-projects" "aar_a5_$abi" \
+              -import "$dest/$abi-ghidra-stripped.so" \
+              -scriptPath "$GITHUB_WORKSPACE/tools/experiment" \
+              -postScript AarJniSemanticEvidence.java "$abi" \
+              -analysisTimeoutPerFile 120 -max-cpu 2 -deleteProject \
+              2>&1 | tee "$dest/$abi-ghidra.log"
+            grep -q "AAR_A4_COUNT=2" "$dest/$abi-ghidra.log"
+            python3 tools/experiment_ndk_jni_optimizer_holdout_v0.py \
+              --baseline "$RUNNER_TEMP/a5/O1/$abi" --heldout "$dest" \
+              --abi "$abi" --log "$dest/$abi-ghidra.log" \
+              --out "$RUNNER_TEMP/a5/$abi-semantic-result.json"
+          done
+      - name: Upload bounded aggregate classification only, no sources, Ghidra IR, truth or binaries
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: a5-native-heldout-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/a5/*-code-distinction.json
+            ${{ runner.temp }}/a5/*-semantic-result.json
+          if-no-files-found: ignore
+          retention-days: 14
