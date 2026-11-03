@@ -111,7 +111,7 @@ jobs:
               -scriptPath "$GITHUB_WORKSPACE/tools/experiment" \
               -postScript AarJniSemanticEvidence.java "$abi" \
               -analysisTimeoutPerFile 120 -max-cpu 2 -deleteProject \
-              2>&1 | tee "$RUNNER_TEMP/a6/$abi-ghidra.log"
+              2>&1 | tee "$RUNNER_TEMP/a6/$abi-ghidra.log" | sed -E 's/(AAR_A4_IR=)[^[:space:]]+/\1[REDACTED]/g'
             grep -q 'AAR_A4_COUNT=2' "$RUNNER_TEMP/a6/$abi-ghidra.log"
             python3 tools/verify_ndk_jni_controlflow_v0.py \
               --root "$RUNNER_TEMP/a6" --abi "$abi" \
@@ -133,7 +133,7 @@ jobs:
               -scriptPath "$GITHUB_WORKSPACE/tools/experiment" \
               -postScript AarJniSemanticEvidence.java "$abi" \
               -analysisTimeoutPerFile 120 -max-cpu 2 -deleteProject \
-              2>&1 | tee "$RUNNER_TEMP/a7/$abi-ghidra.log"
+              2>&1 | tee "$RUNNER_TEMP/a7/$abi-ghidra.log" | sed -E 's/(AAR_A4_IR=)[^[:space:]]+/\1[REDACTED]/g'
             grep -q 'AAR_A4_COUNT=2' "$RUNNER_TEMP/a7/$abi-ghidra.log"
             python3 tools/verify_ndk_jni_typed_ghidra_v0.py \
               --root "$RUNNER_TEMP/a7" --abi "$abi" \
