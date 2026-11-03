@@ -8,7 +8,7 @@ with unsupported pseudocode is UNKNOWN, not a semantic PASS. No ART runtime.
 from __future__ import annotations
 import argparse,hashlib,json,re,sys
 from pathlib import Path
-from recover_ndk_jni_semantics_v0 import recover,one,evaluate
+from recover_ndk_jni_semantics_v0 import recover,one,evaluate,read_ir_rows
 from verify_ndk_jni_semantics_v0 import vectors
 from experiment_ndk_jni_ghidra_recovery_v0 import digest
 
@@ -41,7 +41,7 @@ def judge(log:str,abi:str,oracle:dict,elf:Path)->dict:
     if one(log,"ABI")!=abi or int(one(log,"COUNT"))!=2:
         raise ValueError("wrong ABI, incomplete or duplicate decompiler evidence")
     base=int(one(log,"BASE"),16)
-    matches=re.findall(r"AAR_A4_IR=([a-f0-9]+)\|([A-Za-z0-9+/=]+)",log)
+    matches=read_ir_rows(log)
     if len(matches)!=2:
         raise ValueError("missing or duplicated decompiler body")
     discovered={int(address,16)-base for address,_ in matches}

@@ -9,7 +9,7 @@ from __future__ import annotations
 import argparse,hashlib,json,re,subprocess,sys
 from pathlib import Path
 from experiment_ndk_jni_bridge_v0 import ndk_root
-from recover_ndk_jni_semantics_v0 import recover,one
+from recover_ndk_jni_semantics_v0 import recover,one,read_ir_rows
 from verify_ndk_jni_semantics_v0 import evaluate_withheld
 
 def sha(data: bytes) -> str:
@@ -52,7 +52,7 @@ def run_evaluator(log:str,oracle:dict,abi:str) -> dict:
     # the current restricted parser cannot interpret those bodies.
     if one(log,"ABI")!=abi or int(one(log,"COUNT"))!=2:
         raise ValueError("invalid Ghidra ABI/function observation")
-    rows=re.findall(r"AAR_A4_IR=([a-f0-9]+)\|([A-Za-z0-9+/=]+)",log)
+    rows=read_ir_rows(log)
     if len(rows)!=2:raise ValueError("missing/extra decompiler evidence")
     try:
         candidate=recover(log,abi)
