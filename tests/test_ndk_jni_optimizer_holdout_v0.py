@@ -23,6 +23,15 @@ class OptimizerHoldoutOracle(unittest.TestCase):
         self.assertEqual(v["unsupported_reason_class"],"UNSUPPORTED_C_TYPE_SEMANTICS")
         self.assertEqual(v["semantic_correct_predictions"],0)
         self.assertFalse(v["qualified"])
+    def test_malformed_extra_ir_is_not_accepted_as_two_rows(self):
+        # A third malformed observation must not be silently ignored.
+        malformed=log(b=AFFINE_UNSIGNED)+"AAR_A4_IR=INVALID|%%%\n"
+        with self.assertRaisesRegex(ValueError,"malformed"):
+            run_evaluator(malformed,TRUTH,"x86_64")
+    def test_trailing_junk_on_ir_record_is_refused(self):
+        bad=log(b=AFFINE_UNSIGNED).replace("AAR_A4_IR=101680|","AAR_A4_IR=101680|junk!",1)
+        with self.assertRaisesRegex(ValueError,"malformed"):
+            run_evaluator(bad,TRUTH,"x86_64")
     def test_unknown_for_valid_nontrivial_c(self):
         altered="uint FUN_00101680(uint param_1) { uint z = param_1 ^ 1; return z; }"
         v=run_evaluator(log(a=altered),TRUTH,"x86_64")
