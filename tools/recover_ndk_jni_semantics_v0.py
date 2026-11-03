@@ -37,16 +37,19 @@ def evaluate(tree,u,depth=0):
         elif k=="xor":v=a^b
         elif k=="or":v=a|b
         elif k=="and":v=a&b
-        elif k=="shl":v=a<<b if b<=31 else 0
-        else:v=a>>b if b<=31 else 0
+        elif k in ("shl","shr"):
+            if b>=32:raise ValueError("UNDEFINED_SHIFT_COUNT: cannot assert C equivalence")
+            v=(a<<b) if k=="shl" else (a>>b)
         return v&0xffffffff
     raise ValueError("unrecognized or forged semantic IR")
 def parse_c(value):
     if not 12<len(value)<4096 or "aar_fold" in value or "aar_affine" in value:
         raise ValueError("Ghidra pseudocode size/hidden-symbol leak")
-    m=re.fullmatch(r"\s*(?:uint|int)\s+FUN_[0-9A-Fa-f]+\s*\(\s*(?:uint|int)\s+param_1\s*\)\s*\{\s*return\s+([^;{}]+);\s*\}\s*",value)
+    m=re.fullmatch(r"\s*(?P<return_type>uint|int)\s+FUN_[0-9A-Fa-f]+\s*\(\s*(?P<parameter_type>uint|int)\s+param_1\s*\)\s*\{\s*return\s+([^;{}]+);\s*\}\s*",value)
     if not m:raise ValueError("unhandled pseudocode structure")
-    expr=m.group(1)
+    if m.group("return_type")!="uint" or m.group("parameter_type")!="uint":
+        raise ValueError("UNSUPPORTED_SIGNED_OR_MIXED_IR: preserve type/ABI or abstain")
+    expr=m.group(3)
     if len(expr)>1200:raise ValueError("expression too large")
     tree=convert(ast.parse(expr,mode="eval").body)
     return tree
