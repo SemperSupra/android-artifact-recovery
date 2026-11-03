@@ -26,6 +26,15 @@ class ControlFlowOracle(unittest.TestCase):
         self.assertEqual(a["status"],"A6_DISJOINT_UNSUPPORTED_ABSTAIN")
         self.assertFalse(a["semantics_qualified"])
         self.assertEqual(a["unknown_helpers"],2)
+    def test_signed_simple_expression_is_explicitly_unqualified(self):
+        # Even a syntactically simple signed right shift has unsupported
+        # implementation-defined semantics in the restricted unsigned A4 IR.
+        signed="int FUN_00100080(int param_1) { return param_1 >> 1; }"
+        a=judge(mklog(signed,SIMPLE),"x86_64",self.oracle,self.elf)
+        self.assertEqual(a["status"],"A6_DISJOINT_UNSUPPORTED_ABSTAIN")
+        self.assertFalse(a["semantics_qualified"])
+        self.assertEqual(a["unknown_helpers"],2)
+        self.assertEqual(a["heldout_vectors_evaluated"],0)
     def test_supported_but_wrong_rejects(self):
         with self.assertRaisesRegex(ValueError,"SEMANTIC_MISMATCH"):
             judge(mklog(SIMPLE,SIMPLE),"x86_64",self.oracle,self.elf)
