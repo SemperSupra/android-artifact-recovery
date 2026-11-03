@@ -35,6 +35,15 @@ class ControlFlowOracle(unittest.TestCase):
         self.assertFalse(a["semantics_qualified"])
         self.assertEqual(a["unknown_helpers"],2)
         self.assertEqual(a["heldout_vectors_evaluated"],0)
+    def test_bad_extra_ir_record_refuses_before_oracle(self):
+        bad=mklog(extra="AAR_A4_IR=GGGG|%%%\n")
+        with self.assertRaisesRegex(ValueError,"malformed"):
+            judge(bad,"x86_64",self.oracle,self.elf)
+    def test_ir_record_trailing_junk_refuses(self):
+        valid=mklog()
+        damaged=valid.replace("AAR_A4_IR=100080|","AAR_A4_IR=100080|!garbage",1)
+        with self.assertRaisesRegex(ValueError,"malformed"):
+            judge(damaged,"x86_64",self.oracle,self.elf)
     def test_supported_but_wrong_rejects(self):
         with self.assertRaisesRegex(ValueError,"SEMANTIC_MISMATCH"):
             judge(mklog(SIMPLE,SIMPLE),"x86_64",self.oracle,self.elf)
