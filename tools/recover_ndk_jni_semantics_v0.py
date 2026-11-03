@@ -69,6 +69,8 @@ def read_ir_rows(log):
         if marker not in line:
             continue
         payload=line.split(marker,1)[1].strip()
+        if payload.endswith(" (GhidraScript)"):
+            payload=payload[:-len(" (GhidraScript)")].rstrip()
         if marker in payload:
             raise ValueError("malformed Ghidra IR evidence record: multiple markers")
         match=IR_RECORD.fullmatch(payload)
