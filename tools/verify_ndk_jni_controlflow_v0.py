@@ -14,7 +14,7 @@ from experiment_ndk_jni_ghidra_recovery_v0 import digest
 
 MASK=0xffffffff
 UNKNOWN=("unhandled pseudocode structure", "unsupported decompiled C operation",
-         "expression too large", "invalid syntax")
+         "expression too large", "invalid syntax", "UNSUPPORTED_SIGNED_OR_MIXED_IR")
 def independent_reference(mode:int,x:int)->int:
     v=x&MASK
     if mode==5:

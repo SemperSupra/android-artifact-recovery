@@ -45,7 +45,7 @@ def attest(baseline:Path, heldout:Path, abi:str) -> dict:
             "binary_executed":False,"source_truth_available_to_reconstructor":False}
 
 UNSUPPORTED=("unhandled pseudocode structure","unsupported decompiled C operation",
-             "expression too large","invalid syntax")
+             "expression too large","invalid syntax","UNSUPPORTED_SIGNED_OR_MIXED_IR")
 
 def run_evaluator(log:str,oracle:dict,abi:str) -> dict:
     # A5 quality depends on exactly two complete Ghidra C bodies, even if
@@ -62,7 +62,9 @@ def run_evaluator(log:str,oracle:dict,abi:str) -> dict:
         return {"schema":1,"abi":abi,"status":"A5_UNSUPPORTED_DECOMPILER_EXPRESSION",
                 "semantic_correct_predictions":0,"qualified":False,
                 "source_truth_reached_candidate":False,
-                "unsupported_reason_class":"UNSUPPORTED_EXPRESSION_SHAPE",
+                "unsupported_reason_class":("UNSUPPORTED_C_TYPE_SEMANTICS"
+                    if "UNSUPPORTED_SIGNED_OR_MIXED_IR" in str(exc)
+                    else "UNSUPPORTED_EXPRESSION_SHAPE"),
                 "new_runtime_executed":False,"actor_qualified":False}
     result=evaluate_withheld(candidate,oracle)
     return {"schema":1,"abi":abi,"status":"A5_RESTRICTED_SEMANTICS_PASS",
