@@ -1,0 +1,63 @@
+{
+  "schema": "aar-source-known-native-qualification/v1",
+  "owner": "SemperSupra/android-artifact-recovery-private#82",
+  "source_pr": "SemperSupra/android-artifact-recovery#43",
+  "source_code_commit": "fc27c98d7d38ebab902b49625c2bb3e57c311d2e",
+  "source_blob_sha1": {
+    "tools/recover_ndk_jni_semantics_v0.py": "25cd2ca5ad9f63c179c61b6ef42bbfa106f18cd3",
+    "qualification/reference/android-jni-typed/verify_native.py": "a9cdb801baa7d3b47f022926993eb0a8f8c17d14",
+    "tools/verify_ndk_jni_controlflow_v0.py": "77fde5ae2e7569d5d2d05cffca6ced4bc5986201",
+    "tests/test_ndk_jni_controlflow_v0.py": "eb0b37bc3139726d905321909649f4eb7edb5377",
+    ".github/workflows/qualify-source-informed-methodology.yml": "bf7574b5fdaf8894a7e8358d480c3fc9f064d30c"
+  },
+  "source_known_ci": {
+    "url": "https://github.com/SemperSupra/android-artifact-recovery/actions/runs/41725803328",
+    "run_id": 41725803328,
+    "conclusion": "success",
+    "completed_jobs": [
+      "public-synthetic-qualification",
+      "A6 novel native control-flow Ghidra abstention challenge"
+    ],
+    "new_typed_guard_tests": {
+      "run": 4,
+      "passed": 4
+    },
+    "a6_adversarial_tests": {
+      "run": 7,
+      "passed": 7
+    },
+    "native_oracle": {
+      "toolchains": [
+        "GCC",
+        "Clang"
+      ],
+      "optimizations": [
+        "-O0",
+        "-O2"
+      ],
+      "native_C_calls": 88,
+      "unsigned_C_calls": 28,
+      "unsigned_mismatches": 0,
+      "signed_or_mixed_C_calls": 60,
+      "signed_negative_observation_count": 16,
+      "signed_negative_disagree_with_naive_unsigned_shift": 16,
+      "signed_mixed_IR_policy": "UNSUPPORTED_SIGNED_OR_MIXED_IR (ABSTAIN)",
+      "platform_reported": "Linux-7.0.0-1017-azure-x86_64-with-glibc2.39",
+      "python_reported": "3.12.3"
+    }
+  },
+  "evidence_grade": "PUBLIC_SOURCE_KNOWN_NATIVE_C_AND_GHIDRA_A6_ABSTENTION_ONLY",
+  "independent_oracle_limits": [
+    "C signed-negative right shift is implementation-defined",
+    "Not Android ART/JNI execution of corrected typed IR",
+    "A6 Ghidra real control-flow fixture remains UNKNOWN/ABSTAIN",
+    "Not aarch64 execution of the new 88-call C oracle",
+    "No independent source reviewer or product merge authority"
+  ],
+  "source_custody": "owning public Git draft #43, external owner-only Drive ZIP retained as historical archive",
+  "promotion_authorized": false,
+  "merge_authorized": false,
+  "private_actions_minutes_spent": 0,
+  "new_paid_spend_usd": 0,
+  "handoff_authority": "mark-e-deyoung/ghidra-tools#4"
+}
