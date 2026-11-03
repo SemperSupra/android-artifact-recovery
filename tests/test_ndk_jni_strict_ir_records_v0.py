@@ -31,6 +31,16 @@ class StrictIRCardinality(unittest.TestCase):
         self.assertEqual(len(read_ir_rows(raw)),2)
         self.assertEqual(len(recover(raw,"x86_64")["helpers"]),2)
 
+    def test_real_ghidra_script_println_suffix(self):
+        native=("INFO AarJniSemanticEvidence.java> AAR_A4_ABI=x86_64 (GhidraScript)  \n"
+                "INFO AarJniSemanticEvidence.java> AAR_A4_BASE=100000 (GhidraScript)  \n"
+                +"INFO AarJniSemanticEvidence.java> AAR_A4_IR=100080|"+B+" (GhidraScript)  \n"
+                +"INFO AarJniSemanticEvidence.java> AAR_A4_IR=1000a0|"+B+" (GhidraScript)  \n"
+                +"INFO AarJniSemanticEvidence.java> AAR_A4_COUNT=2 (GhidraScript)  \n")
+        self.assertEqual(len(recover(native,"x86_64")["helpers"]),2)
+        bad=native.replace(B+" (GhidraScript)",B+"#junk (GhidraScript)",1)
+        with self.assertRaisesRegex(ValueError,"malformed"):
+            recover(bad,"x86_64")
     def test_extra_invalid_row_must_not_be_ignored(self):
         for extra in ("BAD|%%%%","1000b0|%%%%","1000b0|"+B+"!bad"):
             with self.subTest(extra=extra):
