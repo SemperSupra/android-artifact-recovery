@@ -57,10 +57,41 @@ def one(log,tag):
     vals=re.findall(r"AAR_A4_"+tag+r"=([^\s]+)",log)
     if len(vals)!=1:raise ValueError("missing/duplicate Ghidra evidence "+tag)
     return vals[0]
+# Strictly validate every observed Ghidra IR marker, not just a subset
+# matched by a permissive regex. Other Ghidra log lines may be present.
+IR_RECORD = re.compile(r"([a-f0-9]+)\|([A-Za-z0-9+/]+={0,2})")
+def read_ir_rows(log):
+    if len(log)>5_000_000:
+        raise ValueError("oversized Ghidra evidence log")
+    observed=[]
+    for line in log.splitlines():
+        marker="AAR_A4_IR="
+        if marker not in line:
+            continue
+        payload=line.split(marker,1)[1].strip()
+        if marker in payload:
+            raise ValueError("malformed Ghidra IR evidence record: multiple markers")
+        match=IR_RECORD.fullmatch(payload)
+        if match is None:
+            raise ValueError("malformed Ghidra IR evidence record")
+        address,encoded=match.groups()
+        if len(encoded)>5500:
+            raise ValueError("malformed Ghidra IR evidence record: too large")
+        try:
+            raw=base64.b64decode(encoded,validate=True)
+        except (ValueError,base64.binascii.Error) as exc:
+            raise ValueError("malformed Ghidra IR base64") from exc
+        if base64.b64encode(raw).decode("ascii")!=encoded:
+            raise ValueError("malformed Ghidra IR base64: noncanonical")
+        observed.append((address,encoded))
+    if len(observed)!=2:
+        raise ValueError("two complete Ghidra IR records required")
+    return observed
+
 def recover(log,abi):
     if abi not in ("x86_64","aarch64") or one(log,"ABI")!=abi:raise ValueError("ABI mismatch")
     base=int(one(log,"BASE"),16)
-    lines=re.findall(r"AAR_A4_IR=([a-f0-9]+)\|([A-Za-z0-9+/=]+)",log)
+    lines=read_ir_rows(log)
     if len(lines)!=2 or int(one(log,"COUNT"))!=2:raise ValueError("two native functions required")
     out={}
     for address,encoded in lines:
