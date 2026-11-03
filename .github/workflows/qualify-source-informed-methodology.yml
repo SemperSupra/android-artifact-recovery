@@ -13,6 +13,8 @@ on:
       - 'tests/test_ndk_jni_semantics_v0.py'
       - 'tools/experiment_ndk_jni_optimizer_holdout_v0.py'
       - 'tests/test_ndk_jni_optimizer_holdout_v0.py'
+      - 'tests/test_ndk_jni_typed_guard_v0.py'
+      - 'qualification/reference/android-jni-typed/**'
       - 'tools/experiment_ndk_jni_controlflow_v0.py'
       - 'tools/verify_ndk_jni_controlflow_v0.py'
       - 'tests/test_ndk_jni_controlflow_v0.py'
@@ -41,6 +43,10 @@ jobs:
         run: python3 tests/test_ndk_jni_semantics_v0.py
       - name: A5 optimization-heldout UNKNOWN and wrong-semantics controls
         run: python3 tests/test_ndk_jni_optimizer_holdout_v0.py
+      - name: A4/A5 strict typed uint32 IR regression and real native C compiler oracle
+        run: |
+          python3 tests/test_ndk_jni_typed_guard_v0.py
+          python3 qualification/reference/android-jni-typed/verify_native.py
       - name: A6 disjoint native branching/looping oracle controls
         run: python3 tests/test_ndk_jni_controlflow_v0.py
       - name: Scope attestation
