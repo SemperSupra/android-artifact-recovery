@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - tools/summarize_android_surface.py
+      - tests/test_summarize_android_surface_routes.py
       - .github/workflows/recover-chatgpt-public.yml
   workflow_dispatch:
 
@@ -23,6 +24,9 @@ jobs:
       JUSTAPK_COMMIT: fa29784143085163893fac7056f080d961dc505b
     steps:
       - uses: actions/checkout@v4
+
+      - name: Validate public-safe scanner regression controls
+        run: python3 -m unittest -v tests.test_summarize_android_surface_routes
 
       - name: Install pinned apkeep
         shell: bash
