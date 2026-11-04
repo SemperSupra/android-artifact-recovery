@@ -78,6 +78,23 @@ def read_text(path: pathlib.Path) -> str:
     try: return path.read_text(encoding='utf-8', errors='ignore')
     except OSError: return ''
 
+# The naive substring "sse" is found in common Java/Kotlin words like
+# "classes", "assessed", and "massive", severely biasing corpus prevalence.
+# Require a standalone signal or an explicitly SSE-related identifier/MIME.
+SSE_SIGNAL_RE = re.compile(r'(?<![a-z0-9])sse(?![a-z0-9])')
+SSE_EXPLICIT_MARKERS = (
+    'text/event-stream', 'eventsource', 'server-sent-event', 'serversentevent',
+    'sseclient', 'sse_client', 'sseconnection', 'sse_connection',
+    'ssehandler', 'sse_handler', 'ssestream', 'sse_stream',
+)
+
+def keyword_observed(keyword: str, combined_lower_text: str) -> bool:
+    if keyword == 'sse':
+        return bool(SSE_SIGNAL_RE.search(combined_lower_text)) or any(
+            marker in combined_lower_text for marker in SSE_EXPLICIT_MARKERS
+        )
+    return keyword in combined_lower_text
+
 def sanitize_url(raw: str) -> str | None:
     try:
         parsed=urlparse(raw)
@@ -131,7 +148,7 @@ def main() -> int:
             if marker in rel_l: library_hits[name]+=1
         text=read_text(path); low=text.lower(); combined=rel_l+'\n'+low
         for kw in KEYWORDS:
-            if kw in combined: keyword_hits[kw]+=1
+            if keyword_observed(kw, combined): keyword_hits[kw]+=1
         for name,patterns in PROTOCOL_MARKERS.items():
             if any(pattern in combined for pattern in patterns): marker_files[name].append(rel)
         for m in URL_RE.finditer(text):
