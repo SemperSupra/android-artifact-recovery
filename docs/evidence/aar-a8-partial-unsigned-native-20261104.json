@@ -1,0 +1,67 @@
+{
+  "schema": "aar-a8-partial-native-unsigned-qualification/v1",
+  "date": "2026-11-04",
+  "owner": "SemperSupra/android-artifact-recovery-private#82",
+  "source_pr": "SemperSupra/android-artifact-recovery#46",
+  "code_head": "eba82d454cc6ca27905d984ee0103a0e8b4c3306",
+  "stack_base_pr45_head": "63e79601e7ca4bdb661a65eeac7fe2f275e17a3b",
+  "source_blobs": {
+    "tools/recover_ndk_jni_typed_partial_v0.py": "fd10387e23c3cb55da22eb3eca3e615ed385412d",
+    "tools/verify_ndk_jni_typed_partial_native_v0.py": "6e734ae95e9da365f19e899cd1f8602159b319ea",
+    "qualification/reference/android-jni-typed/a8_unsigned_native_oracle.c": "54bc608da5d56b457bc6305e83f41293916cb317",
+    "tests/test_ndk_jni_typed_partial_v0.py": "2eea50b55722b15409fe532db8da39c3a9c2a095",
+    ".github/workflows/qualify-source-informed-methodology.yml": "901f57444df6d8735a607357b2577ca2be26735e"
+  },
+  "run": {
+    "id": 41747892553,
+    "url": "https://github.com/SemperSupra/android-artifact-recovery/actions/runs/41747892553",
+    "conclusion": "success",
+    "completed_jobs": 2,
+    "successful_jobs": 2,
+    "public_synthetic_nine_tests_passed": true,
+    "real_pinned_ndk_ghidra_x86_64_aarch64": true,
+    "source_blind_candidates_frozen_before_native_oracle": true,
+    "aggregate_artifact_id": 13284039119,
+    "artifact_bytes": 1312,
+    "artifact_sha256": "473457d10d9ff1277458d92e764c4d3744b76724930962dd5fe57dc00b1f28b3",
+    "zip_crc_members_passed": 2,
+    "artifact_retention_days": 14
+  },
+  "abi_observations": [
+    {
+      "abi": "x86_64",
+      "observed_helper_entries": 2,
+      "source_blind_unsigned_helpers": 1,
+      "signed_helpers_abstained": 1,
+      "independent_host_c_builds": 4,
+      "native_unsigned_behavioral_comparisons": 4136,
+      "native_mismatches": 0,
+      "elf_sha256": "529f347eaa6bc1d5cdfd6a02dc111abf1d62bcb76e8ff1e07912ffde53066e7a",
+      "status": "A8_UNSIGNED_SOURCE_KNOWN_NATIVE_MATCH_SIGNED_ABSTAIN"
+    },
+    {
+      "abi": "aarch64",
+      "observed_helper_entries": 2,
+      "source_blind_unsigned_helpers": 1,
+      "signed_helpers_abstained": 1,
+      "independent_host_c_builds": 4,
+      "native_unsigned_behavioral_comparisons": 4136,
+      "native_mismatches": 0,
+      "elf_sha256": "57e7b747ad5983d8bdb860932c4b91118fe57169f42cb21b47f1d8eb2d2bf62e",
+      "status": "A8_UNSIGNED_SOURCE_KNOWN_NATIVE_MATCH_SIGNED_ABSTAIN"
+    }
+  ],
+  "limits": {
+    "actual_android_art_jni_runtime_executed": false,
+    "aarch64_native_behavior_executed": false,
+    "source_known_fixture_only": true,
+    "general_signed_semantics_qualified": false,
+    "signed_shift_implementation_defined": true,
+    "production_semantics_qualified": false,
+    "actor_qualified": false,
+    "independent_review_complete": false,
+    "merge_authorized": false
+  },
+  "trust_model": "The candidate IR was frozen by a source-blind process before the evaluator opened producer-only source truth. Native GCC/Clang x86_64 behavior corroborates a source-known unsigned helper; AArch64 Ghidra text was observed but ARM64 native execution was not performed. Receipt does not establish unknown-source semantics or an authenticated Android runtime.",
+  "source_code_remains_in_unmerged_draft": true
+}
