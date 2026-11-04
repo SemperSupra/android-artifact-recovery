@@ -1,0 +1,58 @@
+{
+  "schema": "aar-a9-preregistered-heldout-first-failure/v1",
+  "date": "2026-11-04",
+  "owner": "SemperSupra/android-artifact-recovery-private#82",
+  "public_pr": "SemperSupra/android-artifact-recovery#47",
+  "tested_code_head": "aa73d6d05e6ed1f4b5699717c066f418025d6a75",
+  "parent_a8_head": "eeae4471c9b187d0826410de731ec10741c0963a",
+  "preregistration_commit_preceded_source_changes": "61b1c89344f4cd5ac6d27c6643d06defba91c1b3",
+  "frozen_preregistration_blob": "b44b10f6f1890a4dce92ad35701cf87e8d544ab8",
+  "selected_uint_family": "(x + 0x6d2b79f5) * 0x9e3779b1 XOR 0xa5f1523d modulo 2^32",
+  "A8_preceding_family": "x >>> 1 XOR 0x13579bdf",
+  "source_blobs": {
+    "tools/experiment_ndk_jni_heldout_a9_v0.py": "049629019277710bdc45037d385384f4e00f4098",
+    "tools/experiment_ndk_jni_ghidra_recovery_v0.py": "7968283da0d332aa43062e85c343d2505d1a0b1a",
+    "qualification/reference/android-jni-typed/a9_independent_native_oracle.c": "3aa4851784067e981f00cff324af645e7730e90d",
+    "tools/verify_ndk_jni_heldout_a9_v0.py": "59bfbec2001df792b8c7a031d9888f571f428ba7",
+    "tools/verify_ndk_jni_typed_partial_native_v0.py": "f8c143eb674b09242f550a1e2705a63e8d7f7932",
+    "tests/test_ndk_jni_heldout_a9_v0.py": "85e5b8e0ba0dce4571f63abb02cb0888e8c3c320",
+    ".github/workflows/qualify-source-informed-methodology.yml": "3ee417cc4ba417563a3cb4342743991376a601e8"
+  },
+  "run": {
+    "id": 41749642260,
+    "url": "https://github.com/SemperSupra/android-artifact-recovery/actions/runs/41749642260",
+    "status": "completed",
+    "conclusion": "failure",
+    "public_synthetic_qualification": "success",
+    "native_ghidra_and_oracle_job": "failure",
+    "native_ndk_gcc_clang_host_reference_stage": "entered, failed prior to any accepted A9 comparison",
+    "first_failure_abi": "x86_64",
+    "first_failure_exact": "ValueError: A8 unsigned helper missing supported IR",
+    "first_failure_kind": "RESTRICTED_CANDIDATE_UNSUPPORTED_SHAPE",
+    "native_source_known_a9_build_completed_both_abis": true,
+    "real_ghidra_decompilation_completed_both_abis": true,
+    "ghidra_ir_records_observed_per_abi": 2,
+    "source_blind_a9_candidates_frozen_both_abis": true,
+    "semantic_predictions_accepted": 0,
+    "aarch64_independent_heldout_native_judge_executed": false,
+    "qualified_native_A9_comparisons": 0,
+    "a9_aggregate_published": false,
+    "fixture_modified_after_result": false
+  },
+  "scientific_conclusion": "A8's restricted unsigned IR recovery did not generalize to preregistered disjoint addition/multiplication/XOR family on the first native verifier attempt. Keep A9 as a failed immutable held-out case, not a tunable development fixture.",
+  "limits": [
+    "A9 tool failure does not disprove correct native semantics of source-authored code",
+    "A9 x86_64 Ghidra return shape reason was not published in restricted public logs; do not invent inferred C",
+    "aarch64 candidate frozen but native evaluation not reached due fail-fast",
+    "Do not reclassify UNKNOWN as passing the preregistered semantic criterion",
+    "No ART/JNI runtime or ARM64 native execution"
+  ],
+  "gates": {
+    "new_paid_spend_usd": 0,
+    "private_actions_minutes": 0,
+    "merge_authorized": false,
+    "promotion_authorized": false,
+    "independent_review_pending": true
+  },
+  "next_source_owned_action": "Develop a new separately pre-registered training/development fixture family to strengthen general restricted uint IR grammar; do not tune A9 and call its exposure an unseen holdout. Maintain a fresh later heldout family for scientific qualification."
+}
