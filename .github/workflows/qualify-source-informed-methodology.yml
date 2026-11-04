@@ -7,6 +7,9 @@ on:
       - 'tools/experiment_ndk_jni_ghidra_recovery_v0.py'
       - 'tools/experiment_ndk_jni_typed_source_v0.py'
       - 'tools/verify_ndk_jni_typed_ghidra_v0.py'
+      - 'tools/recover_ndk_jni_typed_partial_v0.py'
+      - 'tools/verify_ndk_jni_typed_partial_native_v0.py'
+      - 'tests/test_ndk_jni_typed_partial_v0.py'
       - 'tests/test_ndk_jni_typed_ghidra_v0.py'
       - 'tools/experiment/AarJniHiddenCallgraph.java'
       - 'tests/test_ndk_jni_ghidra_recovery_v0.py'
@@ -55,6 +58,8 @@ jobs:
           python3 qualification/reference/android-jni-typed/verify_native.py
       - name: A7 typed Ghidra identity and fail-closed synthetic negatives
         run: python3 tests/test_ndk_jni_typed_ghidra_v0.py
+      - name: A8 per-helper source-blind signedness and native-oracle negatives
+        run: python3 tests/test_ndk_jni_typed_partial_v0.py
       - name: A6 disjoint native branching/looping oracle controls
         run: python3 tests/test_ndk_jni_controlflow_v0.py
       - name: Scope attestation
@@ -140,6 +145,26 @@ jobs:
               --log "$RUNNER_TEMP/a7/$abi-ghidra.log" \
               --out "$RUNNER_TEMP/a7/$abi-typed-result.json"
           done
+      - name: A8 freeze source-blind per-helper candidates before independent oracle
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/a8"
+          for abi in x86_64 aarch64; do
+            python3 tools/recover_ndk_jni_typed_partial_v0.py \
+              --abi "$abi" --log "$RUNNER_TEMP/a7/$abi-ghidra.log" \
+              --out "$RUNNER_TEMP/a8/$abi-candidate-private.json"
+          done
+      - name: A8 native unsigned behavioral oracle and signed-helper abstention
+        shell: bash
+        run: |
+          set -euo pipefail
+          for abi in x86_64 aarch64; do
+            python3 tools/verify_ndk_jni_typed_partial_native_v0.py \
+              --abi "$abi" --root "$RUNNER_TEMP/a7" \
+              --candidate "$RUNNER_TEMP/a8/$abi-candidate-private.json" \
+              --out "$RUNNER_TEMP/a8/$abi-partial-result.json"
+          done
       - name: Publish aggregate only; no ELF, Ghidra C, source truth, vectors, or operator key
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -154,5 +179,13 @@ jobs:
         with:
           name: a7-typed-aggregate-${{ github.run_id }}
           path: ${{ runner.temp }}/a7/*-typed-result.json
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Publish A8 partial-native aggregate only (no candidate IR, Ghidra C, or oracle vectors)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: a8-partial-aggregate-${{ github.run_id }}
+          path: ${{ runner.temp }}/a8/*-partial-result.json
           if-no-files-found: ignore
           retention-days: 14
