@@ -63,9 +63,9 @@ PROTOCOL_MARKERS = {
 }
 URL_RE = re.compile(r'https?://[^\s"\'<>\\)]+', re.I)
 URI_RE = re.compile(r'(?<![A-Za-z0-9+.-])([a-z][a-z0-9+.-]{1,31})://([^\s"\'<>\\)]+)', re.I)
-HOSTISH_RE = re.compile(r'(?<![A-Za-z0-9_-])(?:[A-Za-z0-9-]+\\.)+(?:com|net|org|io|ai|dev|app)(?![A-Za-z0-9_-])', re.I)
+HOSTISH_RE = re.compile(r'(?<![A-Za-z0-9_-])(?:[A-Za-z0-9-]+\.)+(?:com|net|org|io|ai|dev|app)(?![A-Za-z0-9_-])', re.I)
 ROUTE_RE = re.compile(
-    r'["\'](/(?:v\\d+|api|backend-api|accounts|auth|oauth|realtime|voice|files?|uploads?|'
+    r'["\'](/(?:v\d+|api|backend-api|accounts|auth|oauth|realtime|voice|files?|uploads?|'
     r'conversations?|models?|connectors?|codex|share|search|images?|audio|ws|events|tools?)'
     r'[A-Za-z0-9_./?=&%{}:$@+~\\-]{0,220})["\']',
     re.I,
