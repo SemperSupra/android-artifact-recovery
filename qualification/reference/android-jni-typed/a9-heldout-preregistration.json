@@ -1,0 +1,42 @@
+{
+  "schema": "aar-a9-heldout-preregistration/v1",
+  "date": "2026-11-04",
+  "owner": "SemperSupra/android-artifact-recovery-private#82",
+  "parent": "SemperSupra/android-artifact-recovery#46",
+  "purpose": "Disjoint source-known unsigned C expression family to challenge A8, no tuning after Ghidra observations",
+  "fixture_kind": "heldout_a9",
+  "optimization": "-O0",
+  "platforms_ghidra": [
+    "x86_64",
+    "aarch64"
+  ],
+  "compiler": "pinned Android NDK r27 and Ghidra 12.1.4 inherited from A8",
+  "unsigned_expression": "uint32_t y = (x + UINT32_C(0x6d2b79f5)) * UINT32_C(0x9e3779b1); return y ^ UINT32_C(0xa5f1523d);",
+  "signed_abstain": "int32_t signed_helper(int32_t x) { return (x >> 1) ^ 0x02468ace; }",
+  "rationale": "Addition/multiplication/XOR modular uint32 chain is disjoint from A8's unsigned right shift/XOR",
+  "source_known_truth_handling": "Producer-only symbol oracle, not imported into source-blind candidate; two independently attributed helper addresses before behavior review",
+  "oracle": "Separate independently compiled native C function using unsigned uint32 modular arithmetic; GCC and Clang at O0/O2",
+  "vectors": "10 fixed boundaries plus 1024 deterministic PRNG vectors seeded 0x12345678 (1034 unique-or-repeated evaluations, 4136 compiler observations per Ghidra ABI)",
+  "precommitted_acceptance": [
+    "Both actual pinned NDK x86_64 and aarch64 stripped source-owned binaries produce exactly two Ghidra helper records and independent producer-address matches",
+    "Source-blind per-helper IR is frozen before any source truth or native oracle access",
+    "Exactly one unsigned helper passes all 4136 host compiler comparisons per observed ABI with zero mismatches",
+    "Exactly one signed helper remains unsupported; no semantics promotion or unsigned reinterpretation",
+    "Wrong unsigned constant, swapped address attribution, malformed extra IR, wrong ABI and false signed promotion are rejected by negative tests",
+    "Any unsupported expression, compiler divergence or invalid mapping is UNKNOWN/FAIL, never silently accepted"
+  ],
+  "limitations": [
+    "Host x86_64 compiler behavior is not ARM64 execution",
+    "Android ART/JNI runtime not exercised by this qualification",
+    "One source-owned fixture family is not proof of unknown binary recovery or general C semantics",
+    "Signed negative right shifts remain implementation-defined, not qualified",
+    "No merge/release or actor promotion from a green workflow"
+  ],
+  "constraints": {
+    "new_cost_usd": 0,
+    "private_github_actions_minutes": 0,
+    "no_private_source_on_public_runner": true,
+    "review_required": true
+  },
+  "status": "PREREGISTERED_BEFORE_SOURCE_IMPLEMENTATION"
+}
