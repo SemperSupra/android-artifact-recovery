@@ -25,7 +25,7 @@ def cmd(*args):
 def digest(p):
     return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 def build(root, abi, optimization="O1", fixture_kind="baseline"):
-    if fixture_kind not in ("baseline", "controlflow", "typed"):
+    if fixture_kind not in ("baseline", "controlflow", "typed", "heldout_a9"):
         raise ValueError("unadmitted source-owned native fixture")
     if fixture_kind == "controlflow":
         from experiment_ndk_jni_controlflow_v0 import CPP_CONTROL_FLOW
@@ -33,6 +33,9 @@ def build(root, abi, optimization="O1", fixture_kind="baseline"):
     elif fixture_kind == "typed":
         from experiment_ndk_jni_typed_source_v0 import CPP_TYPED
         fixture_cpp = CPP_TYPED
+    elif fixture_kind == "heldout_a9":
+        from experiment_ndk_jni_heldout_a9_v0 import CPP_HELDOUT_A9
+        fixture_cpp = CPP_HELDOUT_A9
     else:
         fixture_cpp = CPP
     if optimization not in ("O0", "O1", "O2"):
@@ -121,7 +124,7 @@ def main():
     p.add_argument("--root",type=Path,required=True)
     p.add_argument("--abi",choices=ABIS,required=True)
     p.add_argument("--optimization",choices=("O0","O1","O2"),default="O1")
-    p.add_argument("--fixture-kind",choices=("baseline","controlflow","typed"),default="baseline")
+    p.add_argument("--fixture-kind",choices=("baseline","controlflow","typed","heldout_a9"),default="baseline")
     g=p.add_mutually_exclusive_group(required=True)
     g.add_argument("--build",action="store_true")
     g.add_argument("--verify",type=Path)
