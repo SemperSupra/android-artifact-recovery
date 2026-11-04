@@ -5,7 +5,7 @@ Run from the repository root: python -m unittest tests.test_summarize_android_su
 """
 import unittest
 
-from tools.summarize_android_surface import HOSTISH_RE, ROUTE_RE
+from tools.summarize_android_surface import HOSTISH_RE, ROUTE_RE, keyword_observed
 
 
 class RecoverySurfaceRegexTests(unittest.TestCase):
@@ -44,6 +44,24 @@ class RecoverySurfaceRegexTests(unittest.TestCase):
 
     def test_non_api_path_is_rejected(self):
         self.assertIsNone(ROUTE_RE.search("'/unrelated'"))
+
+
+    def test_sse_does_not_match_accidental_word_substrings(self):
+        for decoy in ("classes", "assessed", "massive", "busses", "ModelResponseClasses"):
+            with self.subTest(decoy=decoy):
+                self.assertFalse(keyword_observed("sse", decoy.lower()))
+
+    def test_sse_recognizes_actual_protocol_or_symbol_signals(self):
+        for signal in (
+            "text/event-stream", "EventSource", "SseClient",
+            "/repo/sse/client.py", "serverSentEvent", "sse_channel",
+        ):
+            with self.subTest(signal=signal):
+                self.assertTrue(keyword_observed("sse", signal.lower()))
+
+    def test_non_sse_keywords_keep_previous_substring_behavior(self):
+        self.assertTrue(keyword_observed("websocket", "org/websocket/transport.java"))
+        self.assertFalse(keyword_observed("grpc", "not-a-protocol"))
 
 
 if __name__ == "__main__":
