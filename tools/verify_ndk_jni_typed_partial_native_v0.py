@@ -32,7 +32,9 @@ def vectors() -> list[int]:
         values.append(state)
     return values
 
-def make_host_oracles(source: Path, values: list[int]) -> tuple[list[list[int]],str]:
+def make_host_oracles(source: Path, values: list[int], symbol: str = "a8_u32_reference") -> tuple[list[list[int]],str]:
+    if symbol not in ("a8_u32_reference", "a9_u32_reference"):
+        raise ValueError("unregistered native oracle symbol")
     if not source.is_file() or source.stat().st_size>100_000:
         raise ValueError("missing/oversized source-known native oracle")
     source_hash=hashlib.sha256(source.read_bytes()).hexdigest()
@@ -47,7 +49,7 @@ def make_host_oracles(source: Path, values: list[int]) -> tuple[list[list[int]],
                      str(source),"-o",str(output)],check=True,capture_output=True,
                      timeout=60)
                 lib=ctypes.CDLL(str(output))
-                fn=lib.a8_u32_reference
+                fn=getattr(lib,symbol)
                 fn.argtypes=[ctypes.c_uint32]
                 fn.restype=ctypes.c_uint32
                 outputs.append([int(fn(v)) for v in values])
@@ -56,10 +58,11 @@ def make_host_oracles(source: Path, values: list[int]) -> tuple[list[list[int]],
     return outputs,source_hash
 
 def judge(candidate: dict, abi: str, producer: dict, elf: Path,
-          samples: list[int], native_output: list[list[int]], source_hash: str) -> dict:
+          samples: list[int], native_output: list[list[int]], source_hash: str,
+          fixture_kind: str = "typed") -> dict:
     if abi not in MACHINES or producer.get("abi")!=abi or candidate.get("abi")!=abi:
         raise ValueError("A8 cross-ABI candidate/oracle mismatch")
-    if producer.get("fixture_kind")!="typed" or producer.get("optimization")!="-O0":
+    if fixture_kind not in ("typed", "heldout_a9") or producer.get("fixture_kind")!=fixture_kind or producer.get("optimization")!="-O0":
         raise ValueError("A8 unexpected fixture or optimizer")
     if producer.get("elf_machine")!=MACHINES[abi] or not elf.is_file():
         raise ValueError("A8 unexpected ELF machine")
@@ -93,8 +96,10 @@ def judge(candidate: dict, abi: str, producer: dict, elf: Path,
         for u,want in zip(samples,row):
             if evaluate(good["ir"],u)!=want:
                 raise ValueError("A8 native source-known UNSIGNED_SEMANTIC_MISMATCH")
-    return {"schema":1,"abi":abi,"status":"A8_UNSIGNED_SOURCE_KNOWN_NATIVE_MATCH_SIGNED_ABSTAIN",
-        "fixture_kind":"typed","elf_sha256":actual_hash,
+    status=("A8_UNSIGNED_SOURCE_KNOWN_NATIVE_MATCH_SIGNED_ABSTAIN"
+        if fixture_kind=="typed" else "A9_HELDOUT_UINT_NATIVE_MATCH_SIGNED_ABSTAIN")
+    return {"schema":1,"abi":abi,"status":status,
+        "fixture_kind":fixture_kind,"elf_sha256":actual_hash,
         "source_blind_recovered_unsigned_helpers":1,
         "signed_helpers_abstained":1,
         "source_truth_accessed_after_candidate_freeze":True,
