@@ -5,6 +5,8 @@ on:
     paths:
       - tools/summarize_android_surface.py
       - tests/test_summarize_android_surface_routes.py
+      - tools/qualify_jadx_log.py
+      - tests/test_qualify_jadx_log.py
       - .github/workflows/recover-chatgpt-public.yml
   workflow_dispatch:
 
@@ -26,7 +28,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Validate public-safe scanner regression controls
-        run: python3 -m unittest -v tests.test_summarize_android_surface_routes
+        run: python3 -m unittest -v tests.test_summarize_android_surface_routes tests.test_qualify_jadx_log
 
       - name: Install pinned apkeep
         shell: bash
@@ -191,6 +193,7 @@ jobs:
         run: |
           python3 - <<'PY'
           import json, pathlib
+          from tools.qualify_jadx_log import qualify_jadx_log
           root=pathlib.Path("out/chatgpt")
           def load(name):
               p=root/name
@@ -198,6 +201,8 @@ jobs:
               except Exception: return None
           char=load("artifact-characterization.json")
           selected=load("selected-source.json")
+          jadx_status_path=root/"jadx-status.txt"
+          jadx=qualify_jadx_log(jadx_status_path.read_text(errors="replace") if jadx_status_path.exists() else "")
           receipt={
             "schema":"aar-chatgpt-public-recovery-receipt/v1",
             "package_id":"com.openai.chatgpt",
@@ -205,6 +210,8 @@ jobs:
             "official_signer_verified": bool(selected),
             "artifact_characterization_summary": (char or {}).get("summary"),
             "derived_surface_present": (root/"derived-surface.json").is_file(),
+            "decompiler_qualification": jadx,
+            "full_code_recovery_claimed": False,
             "proprietary_bytes_published": False,
             "claim_boundary":"Public artifact contains only bounded derived metadata; no APK/XAPK or decompiled source is retained."
           }
