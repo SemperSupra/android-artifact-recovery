@@ -11,6 +11,23 @@ import json
 import re
 from pathlib import Path
 from zipfile import ZipFile
+from tools.summarize_android_surface import KEYWORDS, LIBRARY_MARKERS, PROTOCOL_MARKERS
+
+# Metric dictionary keys must be literal, reviewed scanner vocabulary.
+# Do not emit arbitrary keys from externally supplied evidence ZIPs.
+_ALLOWED_METRICS = {
+    "feature_markers": frozenset(KEYWORDS),
+    "library_markers": frozenset(LIBRARY_MARKERS),
+    "protocol_markers": frozenset(PROTOCOL_MARKERS),
+}
+
+def _validate_metric_names(surface: dict) -> None:
+    for field, allowed in _ALLOWED_METRICS.items():
+        metrics = surface.get(field)
+        if not isinstance(metrics, dict):
+            raise ValueError(f"missing or invalid {field}")
+        if any(not isinstance(name, str) or name not in allowed for name in metrics):
+            raise ValueError(f"unexpected metric name in {field}")
 
 _MAX_MEMBER = 2_000_000
 _SHA = re.compile(r"^([a-fA-F0-9]{64})\s+\S+", re.M)
@@ -44,6 +61,7 @@ def load_evidence(path: str | Path) -> dict:
     for field in ("feature_markers", "protocol_markers", "library_markers"):
         if not isinstance(surface.get(field), dict):
             raise ValueError(f"missing or invalid {field}")
+    _validate_metric_names(surface)
     return {"donor_sha256": match.group(1).lower(), "receipt": receipt, "surface": surface}
 
 
@@ -59,6 +77,8 @@ def _safe_value(value: object) -> object:
 
 
 def compare(left: dict, right: dict) -> dict:
+    _validate_metric_names(left["surface"])
+    _validate_metric_names(right["surface"])
     same_sha = left["donor_sha256"] == right["donor_sha256"]
     identity_ok = all(
         x["receipt"].get("package_id") == "com.openai.chatgpt"
