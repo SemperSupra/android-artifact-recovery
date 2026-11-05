@@ -1,0 +1,122 @@
+"""Compare repeated derived Android evidence ZIPs without consuming original APKs.
+
+A same-SHA donor does not imply deterministic decompilation or complete runtime
+coverage. This is a metadata-only, non-promoting, read-only diagnostic.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import re
+from pathlib import Path
+from zipfile import ZipFile
+
+_MAX_MEMBER = 2_000_000
+_SHA = re.compile(r"^([a-fA-F0-9]{64})\s+\S+", re.M)
+_MEMBERS = ("selected-archive-sha256.txt", "receipt.json", "derived-surface.json")
+
+
+def _read_member(z: ZipFile, name: str) -> bytes:
+    matches = [x for x in z.infolist() if x.filename == name]
+    if len(matches) != 1 or matches[0].file_size > _MAX_MEMBER:
+        raise ValueError(f"missing, repeated or oversized required member: {name}")
+    data = z.read(matches[0])
+    if len(data) > _MAX_MEMBER:
+        raise ValueError(f"oversized member: {name}")
+    return data
+
+
+def load_evidence(path: str | Path) -> dict:
+    with ZipFile(path) as z:
+        source = _read_member(z, _MEMBERS[0]).decode("utf-8")
+        match = _SHA.search(source)
+        if not match:
+            raise ValueError("missing valid selected-archive sha256")
+        receipt = json.loads(_read_member(z, _MEMBERS[1]))
+        surface = json.loads(_read_member(z, _MEMBERS[2]))
+    if receipt.get("schema") != "aar-chatgpt-public-recovery-receipt/v1":
+        raise ValueError("unsupported receipt schema")
+    if surface.get("schema") != "aar-derived-android-surface/v2":
+        raise ValueError("unsupported surface schema")
+    if not isinstance(surface.get("files_scanned"), int) or surface["files_scanned"] < 0:
+        raise ValueError("invalid files_scanned")
+    for field in ("feature_markers", "protocol_markers", "library_markers"):
+        if not isinstance(surface.get(field), dict):
+            raise ValueError(f"missing or invalid {field}")
+    return {"donor_sha256": match.group(1).lower(), "receipt": receipt, "surface": surface}
+
+
+def _safe_value(value: object) -> object:
+    """Never expose raw path, URL, API shape or free-text donor-derived values."""
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    canonical = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return {
+        "content_sha256": hashlib.sha256(canonical.encode()).hexdigest(),
+        "element_count": len(value) if isinstance(value, (dict, list, tuple, str)) else None,
+    }
+
+
+def compare(left: dict, right: dict) -> dict:
+    same_sha = left["donor_sha256"] == right["donor_sha256"]
+    identity_ok = all(
+        x["receipt"].get("package_id") == "com.openai.chatgpt"
+        and x["receipt"].get("official_signer_verified") is True
+        and x["receipt"].get("proprietary_bytes_published") is False
+        for x in (left, right)
+    )
+    same_source = left["receipt"].get("selected_source") == right["receipt"].get("selected_source")
+    if not identity_ok:
+        status = "INVALID_OR_UNVERIFIED_PROVENANCE"
+    elif not same_sha or not same_source:
+        status = "INCOMPARABLE_SOURCE_IDENTITY"
+    else:
+        status = "PENDING_COMPARISON"
+    diffs: dict[str, object] = {}
+    if status == "PENDING_COMPARISON":
+        for field in ("files_scanned", "feature_markers", "protocol_markers", "library_markers"):
+            a, b = left["surface"].get(field), right["surface"].get(field)
+            if isinstance(a, dict) and isinstance(b, dict):
+                keys = sorted(set(a) | set(b))
+                changed = {
+                    k: {"left": _safe_value(a.get(k)), "right": _safe_value(b.get(k))}
+                    for k in keys if a.get(k) != b.get(k)
+                }
+                if changed:
+                    diffs[field] = changed
+            elif a != b:
+                diffs[field] = {"left": _safe_value(a), "right": _safe_value(b)}
+        status = "SAME_DONOR_DERIVATION_DRIFT" if diffs else "SAME_DONOR_BOUNDED_REPEATABLE"
+    return {
+        "schema": "aar-android-repeated-donor-diagnostic/v1",
+        "status": status,
+        "same_donor_sha256": same_sha,
+        "same_acquisition_source": same_source,
+        "bounded_signer_claims_present": identity_ok,
+        "donor_sha256": left["donor_sha256"] if same_sha else None,
+        "left_decompiler_status": (left["receipt"].get("decompiler_qualification") or {}).get("status"),
+        "right_decompiler_status": (right["receipt"].get("decompiler_qualification") or {}).get("status"),
+        "observed_differences": diffs,
+        "qualified_full_coverage": False,
+        "promotion_authorized": False,
+        "claim_boundary": "This compares bounded derived metadata, not complete code, runtime semantics or independent oracle acceptance.",
+    }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("left_zip")
+    parser.add_argument("right_zip")
+    parser.add_argument("--out", default="-")
+    args = parser.parse_args()
+    report = compare(load_evidence(args.left_zip), load_evidence(args.right_zip))
+    data = json.dumps(report, sort_keys=True, indent=2) + "\n"
+    if args.out == "-":
+        print(data, end="")
+    else:
+        Path(args.out).write_text(data, encoding="utf-8")
+
+
+if __name__ == "__main__":
+    main()
