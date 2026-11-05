@@ -9,6 +9,8 @@ on:
       - tests/test_qualify_jadx_log.py
       - tools/qualify_android_abi.py
       - tests/test_qualify_android_abi.py
+      - tools/compare_android_recovery_receipts.py
+      - tests/test_compare_android_recovery_receipts.py
       - .github/workflows/recover-chatgpt-public.yml
   workflow_dispatch:
 
@@ -30,7 +32,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Validate public-safe scanner regression controls
-        run: python3 -m unittest -v tests.test_summarize_android_surface_routes tests.test_qualify_jadx_log tests.test_qualify_android_abi
+        run: python3 -m unittest -v tests.test_summarize_android_surface_routes tests.test_qualify_jadx_log tests.test_qualify_android_abi tests.test_compare_android_recovery_receipts
 
       - name: Install pinned apkeep
         shell: bash
