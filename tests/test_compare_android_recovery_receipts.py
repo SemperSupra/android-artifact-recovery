@@ -12,7 +12,7 @@ from tools.compare_android_recovery_receipts import compare, load_evidence
 SHA = "a" * 64
 
 
-def make_zip(path, *, sha=SHA, files=10, marker=2, verified=True, source="apkpure", extra=None):
+def make_zip(path, *, sha=SHA, files=10, marker=2, verified=True, source="apkpure", extra=None, extra_feature_key=None):
     receipt = {
         "schema": "aar-chatgpt-public-recovery-receipt/v1",
         "package_id": "com.openai.chatgpt",
@@ -28,6 +28,8 @@ def make_zip(path, *, sha=SHA, files=10, marker=2, verified=True, source="apkpur
         "protocol_markers": {"grpc_surface": ["matched"]},
         "library_markers": {"okhttp": 3},
     }
+    if extra_feature_key is not None:
+        surface["feature_markers"][extra_feature_key] = 1
     with ZipFile(path, "w") as z:
         z.writestr("selected-archive-sha256.txt", f"{sha}  donor.xapk\n")
         z.writestr("receipt.json", json.dumps(receipt))
@@ -73,6 +75,13 @@ class RepeatabilityTests(unittest.TestCase):
     def test_unsigned_receipt_does_not_promote(self):
         make_zip(self.a); make_zip(self.b, verified=False)
         self.assertEqual(self.score()["status"], "INVALID_OR_UNVERIFIED_PROVENANCE")
+
+    def test_unknown_derived_metric_key_rejected_before_public_comparison(self):
+        # Metadata in an imported ZIP is untrusted. A malicious/derived string
+        # must not become an unredacted dictionary key in the public report.
+        make_zip(self.a, extra_feature_key="private-token-in-derived-key")
+        with self.assertRaisesRegex(ValueError, "unexpected metric"):
+            load_evidence(self.a)
 
     def test_duplicate_required_member_rejected(self):
         make_zip(self.a, extra=[("receipt.json", "{}")])
