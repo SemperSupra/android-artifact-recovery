@@ -200,6 +200,9 @@ jobs:
           from tools.qualify_jadx_log import qualify_jadx_log
           from tools.qualify_android_abi import qualify_native_abi
           root=pathlib.Path("out/chatgpt")
+          # This receipt must be emitted even when an early synthetic check
+          # fails before the acquisition step creates out/chatgpt.
+          root.mkdir(parents=True,exist_ok=True)
           def load(name):
               p=root/name
               try: return json.loads(p.read_text())
