@@ -5,7 +5,7 @@ Run from the repository root: python -m unittest tests.test_summarize_android_su
 """
 import unittest
 
-from tools.summarize_android_surface import HOSTISH_RE, ROUTE_RE, keyword_observed
+from tools.summarize_android_surface import HOSTISH_RE, ROUTE_RE, keyword_observed, sanitize_url
 
 
 class RecoverySurfaceRegexTests(unittest.TestCase):
@@ -20,6 +20,14 @@ class RecoverySurfaceRegexTests(unittest.TestCase):
             HOSTISH_RE.search("cdn.example.dev").group(0),
             "cdn.example.dev",
         )
+
+    def test_malformed_url_port_is_a_bounded_negative(self):
+        # Decompiled text is untrusted; an invalid port must not abort a
+        # donor scan or leak an unredacted URL into public evidence.
+        for url in ("https://api.openai.com:invalid/v1/responses",
+                    "https://api.openai.com:99999/v1/responses"):
+            with self.subTest(url=url):
+                self.assertIsNone(sanitize_url(url))
 
     def test_non_host_control_is_rejected(self):
         self.assertIsNone(HOSTISH_RE.search("not-a-domain"))
