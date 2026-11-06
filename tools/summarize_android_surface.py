@@ -98,12 +98,15 @@ def keyword_observed(keyword: str, combined_lower_text: str) -> bool:
 def sanitize_url(raw: str) -> str | None:
     try:
         parsed=urlparse(raw)
+        # urllib.parse defers invalid-port validation until .port is read.
+        # Both malformed and out-of-range ports must remain bounded negatives.
+        port_number=parsed.port
     except ValueError:
         return None
-    if not parsed.scheme or not parsed.hostname:
+    if parsed.scheme.lower() not in ('http', 'https') or not parsed.hostname:
         return None
     host=parsed.hostname.lower().strip('.')
-    port=f":{parsed.port}" if parsed.port else ''
+    port=f":{port_number}" if port_number else ''
     path=parsed.path or '/'
     # Deliberately drop userinfo, query and fragment. They may contain account,
     # experiment, authorization or other non-public values.
