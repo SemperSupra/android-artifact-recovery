@@ -47,7 +47,9 @@ def _extract_bounded(zf: zipfile.ZipFile, name: str, target: Path) -> str:
 
 
 def _run_one(jadx: Path, dex: Path, output: Path, logfile: Path,
-             seconds: int) -> tuple[int, str, bool, str]:
+             seconds: int, mode: str = "structured") -> tuple[int, str, bool, str]:
+    if mode not in {"structured", "fallback"}:
+        raise ValueError("unsupported JADX mode")
     env = dict(os.environ)
     env["JAVA_OPTS"] = "-Xmx" + JAVA_HEAP + " -XX:+UseG1GC"
     output.mkdir(parents=True, exist_ok=True)
@@ -55,7 +57,8 @@ def _run_one(jadx: Path, dex: Path, output: Path, logfile: Path,
         try:
             proc = subprocess.Popen(
                 [str(jadx), "--threads-count", "1", "--no-res", "--no-imports",
-                 "--show-bad-code", "-d", str(output), str(dex)],
+                 "--show-bad-code"] + (["--decompilation-mode", "fallback"]
+                 if mode == "fallback" else []) + ["-d", str(output), str(dex)],
                 stdout=stream, stderr=subprocess.STDOUT, env=env,
                 start_new_session=True,
             )
@@ -78,12 +81,23 @@ def _run_one(jadx: Path, dex: Path, output: Path, logfile: Path,
 
 
 def run(apk: Path, jadx: Path, out_root: Path, receipt: Path,
-        seconds: int = MAX_SECONDS_PER_DEX) -> dict:
+        seconds: int = MAX_SECONDS_PER_DEX,
+        mode: str = "structured", targets: tuple[str, ...] | None = None) -> dict:
     if not (1 <= seconds <= 300):
         raise ValueError("invalid timeout")
+    if mode not in {"structured", "fallback"}:
+        raise ValueError("unsupported JADX mode")
+    if mode == "fallback" and not targets:
+        raise ValueError("fallback requires bounded explicit targets")
     if not jadx.is_file():
         raise ValueError("pinned JADX tool file not present")
     descriptor = census(apk)  # header bounds, contiguity and counts
+    names = {x["root_dex_name"] for x in descriptor["dex_headers"]}
+    if targets is not None and (not 1 <= len(targets) <= 2
+        or len(set(targets)) != len(targets)
+        or any(name not in names for name in targets)):
+        raise ValueError("invalid, repeated or excessive DEX target")
+    selected = set(targets) if targets is not None else names
     out_root.mkdir(parents=True, exist_ok=True)
     results = []
     observed_relative_paths: set[str] = set()
@@ -93,12 +107,14 @@ def run(apk: Path, jadx: Path, out_root: Path, receipt: Path,
         with zipfile.ZipFile(apk) as zf:
             for i, info in enumerate(descriptor["dex_headers"], 1):
                 name = info["root_dex_name"]
+                if name not in selected:
+                    continue
                 source = temp / name
                 dex_sha = _extract_bounded(zf, name, source)
                 target = out_root / ("shard-" + str(i).zfill(2))
                 log = temp / ("jadx-" + str(i) + ".log")
                 rc, process_status, truncated, logtext = _run_one(
-                    jadx, source, target, log, seconds)
+                    jadx, source, target, log, seconds, mode=mode)
                 # Keep caller-observed output independent of JADX progress %
                 quality = qualify_jadx_log(logtext + "\njadx_returncode=" + str(rc) + "\n")
                 java = sorted((target / "sources").rglob("*.java")) if (target / "sources").is_dir() else []
@@ -119,17 +135,28 @@ def run(apk: Path, jadx: Path, out_root: Path, receipt: Path,
                     "reported_error_count":quality["reported_error_count"],
                     "heap_out_of_memory_observed":("OutOfMemoryError" in logtext),
                     "raw_log_truncated":truncated,
+                    "evidence_grade":("FALLBACK_RAW_INSTRUCTION_RENDERING" if mode == "fallback"
+                                      else "DECOMPILED_JAVA_PARTIAL"),
                 })
                 log.unlink(missing_ok=True)
                 source.unlink(missing_ok=True)
     fail_count = sum(r["exit_code"] != 0 for r in results)
     result = {
         "schema":"aar-jadx-sharded-static-diagnostic/v1",
-        "status":("JADX_SHARDED_EXIT_ZERO_COVERAGE_UNVERIFIED"
-                  if fail_count == 0 else "JADX_SHARDED_PARTIAL_EVIDENCE"),
+        "status":(("JADX_TARGETED_FALLBACK_EXIT_ZERO_COVERAGE_UNVERIFIED"
+                   if fail_count == 0 else "JADX_TARGETED_FALLBACK_PARTIAL_EVIDENCE")
+                  if mode == "fallback" else
+                  ("JADX_SHARDED_EXIT_ZERO_COVERAGE_UNVERIFIED"
+                   if fail_count == 0 else "JADX_SHARDED_PARTIAL_EVIDENCE")),
+        "mode":mode,
+        "original_root_dex_count":descriptor["root_dex_count"],
+        "selected_dex_names":sorted(selected),
+        "evidence_grade":("FALLBACK_RAW_INSTRUCTION_RENDERING" if mode == "fallback"
+                          else "DECOMPILED_JAVA_PARTIAL"),
         "original_donor_executed":False,
         "root_dex_count":len(results),
-        "total_dex_class_defs":descriptor["aggregate"]["class_defs"],
+        "total_dex_class_defs":sum(x["class_defs_header_count"] for x in results),
+        "all_original_dex_class_defs":descriptor["aggregate"]["class_defs"],
         "total_dex_method_ids":descriptor["aggregate"]["method_ids"],
         "total_java_files_observed":sum(r["java_files_observed"] for r in results),
         "java_relative_path_overlap_count":overlap_count,
@@ -154,10 +181,13 @@ def main() -> int:
     p.add_argument("--output",required=True,type=Path)
     p.add_argument("--receipt",required=True,type=Path)
     p.add_argument("--seconds",type=int,default=MAX_SECONDS_PER_DEX)
+    p.add_argument("--mode",choices=("structured","fallback"),default="structured")
+    p.add_argument("--target",action="append",default=None)
     a=p.parse_args()
-    r=run(a.apk,a.jadx,a.output,a.receipt,a.seconds)
+    r=run(a.apk,a.jadx,a.output,a.receipt,a.seconds,a.mode,
+          tuple(a.target) if a.target is not None else None)
     print(json.dumps({"schema":r["schema"],"status":r["status"],
-                      "root_dex_count":r["root_dex_count"],
+                      "root_dex_count":r["root_dex_count"],"mode":r["mode"],
                       "total_java_files_observed":r["total_java_files_observed"],
                       "failed_shard_count":r["failed_shard_count"],
                       "heap_oom_shards":r["heap_oom_shards"]},sort_keys=True))
