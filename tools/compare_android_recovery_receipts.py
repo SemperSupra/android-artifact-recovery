@@ -87,10 +87,20 @@ def compare(left: dict, right: dict) -> dict:
         for x in (left, right)
     )
     same_source = left["receipt"].get("selected_source") == right["receipt"].get("selected_source")
+    config_left = left["receipt"].get("derivation_config")
+    config_right = right["receipt"].get("derivation_config")
+    if config_left is None and config_right is None:
+        config_status = "BOTH_UNRECORDED"
+    elif isinstance(config_left, dict) and isinstance(config_right, dict) and config_left == config_right:
+        config_status = "EXACT_CONFIG_MATCH"
+    else:
+        config_status = "INCOMPARABLE_DERIVATION_CONFIGURATION"
     if not identity_ok:
         status = "INVALID_OR_UNVERIFIED_PROVENANCE"
     elif not same_sha or not same_source:
         status = "INCOMPARABLE_SOURCE_IDENTITY"
+    elif config_status == "INCOMPARABLE_DERIVATION_CONFIGURATION":
+        status = config_status
     else:
         status = "PENDING_COMPARISON"
     diffs: dict[str, object] = {}
@@ -113,6 +123,7 @@ def compare(left: dict, right: dict) -> dict:
         "status": status,
         "same_donor_sha256": same_sha,
         "same_acquisition_source": same_source,
+        "derivation_config_status": config_status,
         "bounded_signer_claims_present": identity_ok,
         "donor_sha256": left["donor_sha256"] if same_sha else None,
         "left_decompiler_status": (left["receipt"].get("decompiler_qualification") or {}).get("status"),

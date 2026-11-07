@@ -188,7 +188,8 @@ jobs:
             "$aapt" dump xmltree "$BASE_APK" AndroidManifest.xml > "$RUNNER_TEMP/AndroidManifest.xml"
           fi
           set +e
-          JAVA_OPTS="-Xmx5g -XX:+UseG1GC" "$RUNNER_TEMP/jadx/bin/jadx" --no-res --no-imports --show-bad-code \
+          # Fixed worker count for a bounded, reproducible candidate rep.
+          JAVA_OPTS="-Xmx5g -XX:+UseG1GC" "$RUNNER_TEMP/jadx/bin/jadx" --threads-count 1 --no-res --no-imports --show-bad-code \
             -d "$RUNNER_TEMP/jadx-out" "$BASE_APK" > out/chatgpt/jadx-status.txt 2>&1
           rc=$?
           set -e
@@ -230,6 +231,12 @@ jobs:
             "artifact_characterization_summary": (char or {}).get("summary"),
             "derived_surface_present": (root/"derived-surface.json").is_file(),
             "decompiler_qualification": jadx,
+            "derivation_config": {
+              "jadx_version":"1.5.6", "threads_count":1,
+              "flags":["--no-res","--no-imports","--show-bad-code"],
+              "jadx_archive_sha256":"545ea2be9c242511bc145755cf4bda2485ade42966e096f8b4d3da2a230e8974",
+              "surface_schema":"aar-derived-android-surface/v2"
+            },
             "native_abi_qualification": abi,
             "full_code_recovery_claimed": False,
             "proprietary_bytes_published": False,

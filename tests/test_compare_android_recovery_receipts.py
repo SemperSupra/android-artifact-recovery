@@ -12,7 +12,7 @@ from tools.compare_android_recovery_receipts import compare, load_evidence
 SHA = "a" * 64
 
 
-def make_zip(path, *, sha=SHA, files=10, marker=2, verified=True, source="apkpure", extra=None, extra_feature_key=None):
+def make_zip(path, *, sha=SHA, files=10, marker=2, verified=True, source="apkpure", extra=None, extra_feature_key=None, config=None):
     receipt = {
         "schema": "aar-chatgpt-public-recovery-receipt/v1",
         "package_id": "com.openai.chatgpt",
@@ -21,6 +21,8 @@ def make_zip(path, *, sha=SHA, files=10, marker=2, verified=True, source="apkpur
         "proprietary_bytes_published": False,
         "decompiler_qualification": {"status": "JADX_RETURNED_ERRORS_PARTIAL_EVIDENCE"},
     }
+    if config is not None:
+        receipt["derivation_config"] = config
     surface = {
         "schema": "aar-derived-android-surface/v2",
         "files_scanned": files,
@@ -63,6 +65,28 @@ class RepeatabilityTests(unittest.TestCase):
         self.assertEqual(r["status"], "SAME_DONOR_DERIVATION_DRIFT")
         self.assertEqual(r["observed_differences"]["files_scanned"], {"left": 10, "right": 11})
         self.assertEqual(r["observed_differences"]["feature_markers"]["sse"], {"left": 2, "right": 3})
+
+    def test_explicit_jadx_configuration_mismatch_is_incomparable(self):
+        make_zip(self.a, config={"threads_count": 1, "jadx_version": "1.5.6"})
+        make_zip(self.b, config={"threads_count": 3, "jadx_version": "1.5.6"}, files=11)
+        r = self.score()
+        self.assertEqual(r["status"], "INCOMPARABLE_DERIVATION_CONFIGURATION")
+        self.assertEqual(r["derivation_config_status"], "INCOMPARABLE_DERIVATION_CONFIGURATION")
+        self.assertEqual(r["observed_differences"], {})
+        self.assertFalse(r["promotion_authorized"])
+
+    def test_one_missing_configuration_is_not_repeatability_claim(self):
+        make_zip(self.a)
+        make_zip(self.b, config={"threads_count": 1})
+        self.assertEqual(self.score()["status"], "INCOMPARABLE_DERIVATION_CONFIGURATION")
+
+    def test_same_explicit_config_can_still_show_bounded_drift(self):
+        config = {"threads_count": 1, "jadx_version": "1.5.6"}
+        make_zip(self.a, config=config)
+        make_zip(self.b, config=config, files=12)
+        r = self.score()
+        self.assertEqual(r["derivation_config_status"], "EXACT_CONFIG_MATCH")
+        self.assertEqual(r["status"], "SAME_DONOR_DERIVATION_DRIFT")
 
     def test_different_original_is_incomparable(self):
         make_zip(self.a); make_zip(self.b, sha="b" * 64)
