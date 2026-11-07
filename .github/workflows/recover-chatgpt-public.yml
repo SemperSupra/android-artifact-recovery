@@ -212,6 +212,10 @@ jobs:
           else
             "$aapt" dump xmltree "$BASE_APK" AndroidManifest.xml > "$RUNNER_TEMP/AndroidManifest.xml"
           fi
+          # Independent DEX table cardinality witness from the same signed
+          # base APK; no code, strings or classes are published.
+          python3 tools/qualify_dex_header_inventory.py --apk "$BASE_APK" \
+            --output out/chatgpt/dex-header-census.json
           set +e
           # Fixed worker count for a bounded, reproducible candidate rep.
           JAVA_OPTS="-Xmx5g -XX:+UseG1GC" "$RUNNER_TEMP/jadx/bin/jadx" --threads-count 1 --no-res --no-imports --show-bad-code \

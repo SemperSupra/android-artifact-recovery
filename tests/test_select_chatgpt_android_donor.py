@@ -32,6 +32,7 @@ class AndroidDonorAdmissionTests(unittest.TestCase):
     def test_source_processor_and_original_workflow_change_admit(self):
         for name in ("tools/summarize_android_surface.py",
                      "tools/qualify_jadx_log.py", "tools/qualify_android_abi.py",
+                     "tools/qualify_dex_header_inventory.py",
                      ".github/workflows/recover-chatgpt-public.yml"):
             with self.subTest(name=name), patch(
                 "tools.select_chatgpt_android_donor.subprocess.run",
