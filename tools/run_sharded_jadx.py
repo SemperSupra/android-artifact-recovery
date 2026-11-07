@@ -18,7 +18,6 @@ import subprocess
 import tempfile
 import zipfile
 
-from tools.qualify_android_abi import qualify_native_abi  # import-only contract parity
 from tools.qualify_dex_header_inventory import census, MAX_DEX_BYTES
 from tools.qualify_jadx_log import qualify_jadx_log
 
@@ -48,7 +47,7 @@ def _extract_bounded(zf: zipfile.ZipFile, name: str, target: Path) -> str:
 
 
 def _run_one(jadx: Path, dex: Path, output: Path, logfile: Path,
-             seconds: int) -> tuple[int, str, bool]:
+             seconds: int) -> tuple[int, str, bool, str]:
     env = dict(os.environ)
     env["JAVA_OPTS"] = "-Xmx" + JAVA_HEAP + " -XX:+UseG1GC"
     output.mkdir(parents=True, exist_ok=True)
@@ -61,7 +60,7 @@ def _run_one(jadx: Path, dex: Path, output: Path, logfile: Path,
                 start_new_session=True,
             )
         except OSError:
-            return 127, "TOOL_LAUNCH_FAILED", False
+            return 127, "TOOL_LAUNCH_FAILED", False, ""
         try:
             rc = proc.wait(timeout=seconds)
             verdict = "EXITED"

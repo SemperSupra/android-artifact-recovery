@@ -12,6 +12,8 @@ on:
       - 'tools/compare_android_recovery_receipts.py'
       - 'tools/select_chatgpt_android_donor.py'
       - 'tools/qualify_dex_header_inventory.py'
+      - 'tools/run_sharded_jadx.py'
+      - 'tests/test_run_sharded_jadx.py'
       - 'tests/test_qualify_dex_header_inventory.py'
       - 'tests/test_summarize_android_surface_routes.py'
       - 'tests/test_qualify_jadx_log.py'
@@ -40,8 +42,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m py_compile tools/summarize_android_surface.py tools/qualify_jadx_log.py tools/qualify_android_abi.py tools/compare_android_recovery_receipts.py tools/select_chatgpt_android_donor.py tools/qualify_dex_header_inventory.py
-          python3 -m unittest -v tests.test_summarize_android_surface_routes tests.test_qualify_jadx_log tests.test_qualify_android_abi tests.test_compare_android_recovery_receipts tests.test_select_chatgpt_android_donor tests.test_qualify_dex_header_inventory
+          python3 -m py_compile tools/summarize_android_surface.py tools/qualify_jadx_log.py tools/qualify_android_abi.py tools/compare_android_recovery_receipts.py tools/select_chatgpt_android_donor.py tools/qualify_dex_header_inventory.py tools/run_sharded_jadx.py
+          python3 -m unittest -v tests.test_summarize_android_surface_routes tests.test_qualify_jadx_log tests.test_qualify_android_abi tests.test_compare_android_recovery_receipts tests.test_select_chatgpt_android_donor tests.test_qualify_dex_header_inventory tests.test_run_sharded_jadx
       - name: Confirm no original donor acquisition
         shell: bash
         run: |

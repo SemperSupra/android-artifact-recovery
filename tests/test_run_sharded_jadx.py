@@ -45,6 +45,17 @@ class ShardJadxTests(unittest.TestCase):
             self.assertNotIn("// synthetic",public)
             self.assertNotIn(str(root),public)
 
+    def test_unlaunchable_tool_emits_typed_failure_not_raw_error(self):
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td);app=root/"synthetic.apk";tool=root/"jadx"
+            tool.write_text("not executable")
+            with zipfile.ZipFile(app,"w") as z:
+                z.writestr("classes.dex", dex(classes=1,methods=1))
+            result=run(app,tool,root/"outputs",root/"receipt.json",seconds=10)
+            self.assertEqual(result["failed_shard_count"],1)
+            self.assertEqual(result["shards"][0]["process_status"],"TOOL_LAUNCH_FAILED")
+            self.assertEqual(result["shards"][0]["exit_code"],127)
+
     def test_invalid_timeout_fails_closed(self):
         with tempfile.TemporaryDirectory() as td:
             root=Path(td);app=root/"no.apk";tool=root/"jadx";fake_tool(tool)

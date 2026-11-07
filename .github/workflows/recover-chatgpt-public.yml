@@ -11,6 +11,8 @@ on:
       - tests/test_qualify_android_abi.py
       - tools/compare_android_recovery_receipts.py
       - tools/select_chatgpt_android_donor.py
+      - tools/run_sharded_jadx.py
+      - tests/test_run_sharded_jadx.py
       - tests/test_compare_android_recovery_receipts.py
       - tests/test_select_chatgpt_android_donor.py
       - .github/workflows/recover-chatgpt-public.yml
@@ -66,7 +68,7 @@ jobs:
           persist-credentials: false
 
       - name: Validate public-safe scanner regression controls
-        run: python3 -m unittest -v tests.test_summarize_android_surface_routes tests.test_qualify_jadx_log tests.test_qualify_android_abi tests.test_compare_android_recovery_receipts
+        run: python3 -m unittest -v tests.test_summarize_android_surface_routes tests.test_qualify_jadx_log tests.test_qualify_android_abi tests.test_compare_android_recovery_receipts tests.test_qualify_dex_header_inventory tests.test_run_sharded_jadx
 
       - name: Install pinned apkeep
         shell: bash
@@ -216,13 +218,13 @@ jobs:
           # base APK; no code, strings or classes are published.
           python3 tools/qualify_dex_header_inventory.py --apk "$BASE_APK" \
             --output out/chatgpt/dex-header-census.json
-          set +e
-          # Fixed worker count for a bounded, reproducible candidate rep.
-          JAVA_OPTS="-Xmx5g -XX:+UseG1GC" "$RUNNER_TEMP/jadx/bin/jadx" --threads-count 1 --no-res --no-imports --show-bad-code \
-            -d "$RUNNER_TEMP/jadx-out" "$BASE_APK" > out/chatgpt/jadx-status.txt 2>&1
-          rc=$?
-          set -e
-          echo "jadx_returncode=$rc" >> out/chatgpt/jadx-status.txt
+          # Avoid the 5 GiB monolithic JADX OOM on the nine-DEX original.
+          # This tool invokes only pinned JADX, in bounded independent processes
+          # with isolated outputs; it never executes APK application code.
+          python3 tools/run_sharded_jadx.py --apk "$BASE_APK" \
+            --jadx "$RUNNER_TEMP/jadx/bin/jadx" \
+            --output "$RUNNER_TEMP/jadx-out" \
+            --receipt out/chatgpt/dex-shard-status.json --seconds 120
           test -d "$RUNNER_TEMP/jadx-out"
           python3 tools/summarize_android_surface.py \
             --jadx-root "$RUNNER_TEMP/jadx-out" \
@@ -251,6 +253,23 @@ jobs:
           selected=load("selected-source.json")
           jadx_status_path=root/"jadx-status.txt"
           jadx=qualify_jadx_log(jadx_status_path.read_text(errors="replace") if jadx_status_path.exists() else "")
+          shard=load("dex-shard-status.json")
+          if isinstance(shard,dict) and shard.get("schema")=="aar-jadx-sharded-static-diagnostic/v1":
+              entries=shard.get("shards") or []
+              counted=[e.get("reported_error_count") for e in entries if isinstance(e,dict)]
+              known_errors=[x for x in counted if type(x) is int and x>=0]
+              jadx={
+                "status":shard.get("status"),
+                "exit_code":None,
+                "reported_error_count":sum(known_errors) if len(known_errors)==len(entries) else None,
+                "total_java_files_observed":shard.get("total_java_files_observed"),
+                "root_dex_count":shard.get("root_dex_count"),
+                "failed_shard_count":shard.get("failed_shard_count"),
+                "heap_oom_shards":shard.get("heap_oom_shards"),
+                "timed_out_shards":shard.get("timed_out_shards"),
+                "full_class_coverage_verified":False,
+                "claim_boundary":"Nine isolated DEX JVMs are independent partial source observations, NOT full class/method or runtime verification."
+              }
           abi=qualify_native_abi(char, "arm64-v8a")
           receipt={
             "schema":"aar-chatgpt-public-recovery-receipt/v1",
@@ -264,7 +283,9 @@ jobs:
               "jadx_version":"1.5.6", "threads_count":1,
               "flags":["--no-res","--no-imports","--show-bad-code"],
               "jadx_archive_sha256":"545ea2be9c242511bc145755cf4bda2485ade42966e096f8b4d3da2a230e8974",
-              "surface_schema":"aar-derived-android-surface/v2"
+              "surface_schema":"aar-derived-android-surface/v2",
+              "strategy":"independent-dex-shards-v1",
+              "heap_max":"4g", "timeout_per_shard_seconds":120
             },
             "native_abi_qualification": abi,
             "full_code_recovery_claimed": False,
