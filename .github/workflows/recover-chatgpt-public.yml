@@ -10,7 +10,9 @@ on:
       - tools/qualify_android_abi.py
       - tests/test_qualify_android_abi.py
       - tools/compare_android_recovery_receipts.py
+      - tools/select_chatgpt_android_donor.py
       - tests/test_compare_android_recovery_receipts.py
+      - tests/test_select_chatgpt_android_donor.py
       - .github/workflows/recover-chatgpt-public.yml
   workflow_dispatch:
 
@@ -24,8 +26,31 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  acquire-and-characterize:
+  admit:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      acquire: ${{ steps.select.outputs.acquire }}
+      reason: ${{ steps.select.outputs.reason }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 / Node24
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Qualify conservative incremental donor admission
+        id: select
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_select_chatgpt_android_donor
+          python3 tools/select_chatgpt_android_donor.py
+
+  acquire-and-characterize:
+    needs: admit
+    # The source-only workflow supplies separate exact-head evidence when donor
+    # acquisition is skipped; skip is not original application qualification.
+    if: needs.admit.outputs.acquire == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
