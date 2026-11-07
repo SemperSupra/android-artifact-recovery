@@ -46,6 +46,11 @@ def census(apk: Path) -> dict:
             raise ValueError("missing or excessive root DEX entries")
         if len({i.filename.casefold() for i in dex}) != len(dex):
             raise ValueError("duplicate root DEX names")
+        # Android multidex names must be consecutive from classes.dex.
+        indices = [1 if i.filename == "classes.dex" else
+                   int(i.filename[len("classes"):-len(".dex")]) for i in dex]
+        if sorted(indices) != list(range(1, len(dex) + 1)):
+            raise ValueError("noncontiguous root DEX sequence")
         for info in sorted(dex,key=lambda i:i.filename):
             if info.is_dir() or not 112 <= info.file_size <= MAX_DEX_BYTES:
                 raise ValueError("invalid DEX declared size")

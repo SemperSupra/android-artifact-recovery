@@ -56,6 +56,14 @@ class DEXHeaderTests(unittest.TestCase):
                 p=Path(d)/"test.apk";apk(p,[("classes.dex",dex(corrupt=fault))])
                 with self.assertRaises(ValueError):census(p)
 
+    def test_missing_base_or_skipped_dex_index_rejected(self):
+        for names in (("classes2.dex",), ("classes.dex", "classes3.dex")):
+            with self.subTest(names=names), tempfile.TemporaryDirectory() as d:
+                path=Path(d)/"test.apk"
+                apk(path, [(name,dex()) for name in names])
+                with self.assertRaisesRegex(ValueError, "noncontiguous"):
+                    census(path)
+
     def test_bad_magic_is_not_accepted(self):
         with self.assertRaises(ValueError):read_header(bytes(112),112)
 
