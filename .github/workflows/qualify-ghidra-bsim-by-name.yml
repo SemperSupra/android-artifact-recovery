@@ -1,0 +1,113 @@
+name: Qualify bounded Ghidra BSim by-name adapter
+
+on:
+  pull_request:
+    paths:
+      - tools/ghidra/AarBSimByName.java
+      - docs/recovery/ghidra-bsim-by-name.md
+      - .github/workflows/qualify-ghidra-bsim-by-name.yml
+      - goldens/component-attribution/native/**
+  push:
+    branches: [main]
+    paths:
+      - tools/ghidra/AarBSimByName.java
+      - docs/recovery/ghidra-bsim-by-name.md
+      - .github/workflows/qualify-ghidra-bsim-by-name.yml
+      - goldens/component-attribution/native/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      GHIDRA_ZIP: ghidra_12.1.4_PUBLIC_20260921.zip
+      GHIDRA_URL: https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.1.4_build/ghidra_12.1.4_PUBLIC_20260921.zip
+      GHIDRA_SHA256: ddac49f903da9d5bac833e5cc79395098b9c33cfd3279be5f31bd00387d2d4db
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Build source-known variants
+        shell: bash
+        working-directory: goldens/component-attribution/native
+        run: |
+          set -euo pipefail
+          rm -rf build
+          mkdir -p build
+          cc -shared -fPIC -O2 -Wl,-soname,libaarknown.so -o build/libaarknown.so known_component.c
+          cp build/libaarknown.so build/libaarknown-exact-copy.so
+          cc -shared -fPIC -O0 -Wl,-soname,libaarknown.so -o build/libaarknown-o0.so known_component.c
+          cc -shared -fPIC -O2 -Wl,-soname,libaarknown.so -o build/libaarknown-false-friend.so false_friend.c
+
+      - name: Install pinned Ghidra
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 --retry-all-errors "$GHIDRA_URL" -o "$RUNNER_TEMP/$GHIDRA_ZIP"
+          echo "$GHIDRA_SHA256  $RUNNER_TEMP/$GHIDRA_ZIP" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/ghidra"
+          unzip -q "$RUNNER_TEMP/$GHIDRA_ZIP" -d "$RUNNER_TEMP/ghidra"
+          ghidra_dir="$(find "$RUNNER_TEMP/ghidra" -mindepth 1 -maxdepth 1 -type d -name 'ghidra_*' -print -quit)"
+          test -x "$ghidra_dir/support/analyzeHeadless"
+          echo "GHIDRA_DIR=$ghidra_dir" >> "$GITHUB_ENV"
+
+      - name: Import reference and candidates
+        shell: bash
+        run: |
+          set -euo pipefail
+          project="$RUNNER_TEMP/aar-bsim-by-name"
+          mkdir -p "$project" out/bsim-by-name
+          echo "PROJECT_DIR=$project" >> "$GITHUB_ENV"
+
+          for file in libaarknown.so libaarknown-exact-copy.so libaarknown-o0.so libaarknown-false-friend.so; do
+            "$GHIDRA_DIR/support/analyzeHeadless"               "$project" aar_bsim_by_name               -import "$GITHUB_WORKSPACE/goldens/component-attribution/native/build/$file"               -analysisTimeoutPerFile 120 -max-cpu 2
+          done
+
+          printf '%s\n' aar_known_mix aar_known_checksum > out/names.txt
+
+      - name: Run bounded by-name comparisons
+        shell: bash
+        run: |
+          set -euo pipefail
+          for variant in exact-copy o0 false-friend; do
+            case "$variant" in
+              exact-copy) file=libaarknown-exact-copy.so ;;
+              o0) file=libaarknown-o0.so ;;
+              false-friend) file=libaarknown-false-friend.so ;;
+            esac
+            "$GHIDRA_DIR/support/analyzeHeadless"               "$PROJECT_DIR" aar_bsim_by_name               -process "$file"               -scriptPath "$GITHUB_WORKSPACE/tools/ghidra"               -postScript AarBSimByName.java                 /libaarknown.so "$GITHUB_WORKSPACE/out/names.txt"                 "$GITHUB_WORKSPACE/out/bsim-by-name/$variant.json"               -analysisTimeoutPerFile 120 -max-cpu 2
+          done
+
+      - name: Evaluate bounded adapter
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json,pathlib
+          root=pathlib.Path("out/bsim-by-name")
+          docs={k:json.loads((root/f"{k}.json").read_text()) for k in ("exact-copy","o0","false-friend")}
+          def by_name(doc):
+              return {r["function"]:r for r in doc["matches"]}
+          m={k:by_name(v) for k,v in docs.items()}
+          assert all(v["schema"]=="aar-ghidra-bsim-by-name/v0" for v in docs.values())
+          assert all(v["policy"]["production_similarity_threshold"]=="UNQUALIFIED" for v in docs.values())
+          assert all(len(v["matches"])==2 for v in docs.values())
+          for f in ("aar_known_mix","aar_known_checksum"):
+              assert m["exact-copy"][f]["similarity"] >= 0.999
+          # Preserve the already-qualified mixed result: at least one O0 source-known
+          # function must separate materially from its same-name false friend.
+          margins={
+              f:m["o0"][f]["similarity"]-m["false-friend"][f]["similarity"]
+              for f in ("aar_known_mix","aar_known_checksum")
+          }
+          assert any(x > 0.10 for x in margins.values()), margins
+          print("bsim-by-name-qualification=PASS",margins)
+          PY
