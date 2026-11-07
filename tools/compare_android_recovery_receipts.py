@@ -13,6 +13,19 @@ from pathlib import Path
 from zipfile import ZipFile
 from tools.summarize_android_surface import KEYWORDS, LIBRARY_MARKERS, PROTOCOL_MARKERS
 
+_ALLOWED_JADX_STATUS = {
+    "MISSING_JADX_EXIT_CODE",
+    "JADX_RETURNED_ERRORS_PARTIAL_EVIDENCE",
+    "JADX_EXIT_ZERO_COVERAGE_UNVERIFIED",
+}
+
+
+def _safe_jadx_status(receipt: dict) -> str:
+    quality = receipt.get("decompiler_qualification")
+    value = quality.get("status") if isinstance(quality, dict) else None
+    return value if isinstance(value, str) and value in _ALLOWED_JADX_STATUS else "UNREVIEWED_JADX_STATUS"
+
+
 # Metric dictionary keys must be literal, reviewed scanner vocabulary.
 # Do not emit arbitrary keys from externally supplied evidence ZIPs.
 _ALLOWED_METRICS = {
@@ -56,7 +69,7 @@ def load_evidence(path: str | Path) -> dict:
         raise ValueError("unsupported receipt schema")
     if surface.get("schema") != "aar-derived-android-surface/v2":
         raise ValueError("unsupported surface schema")
-    if not isinstance(surface.get("files_scanned"), int) or surface["files_scanned"] < 0:
+    if type(surface.get("files_scanned")) is not int or surface["files_scanned"] < 0:
         raise ValueError("invalid files_scanned")
     for field in ("feature_markers", "protocol_markers", "library_markers"):
         if not isinstance(surface.get(field), dict):
@@ -99,8 +112,10 @@ def compare(left: dict, right: dict) -> dict:
         status = "INVALID_OR_UNVERIFIED_PROVENANCE"
     elif not same_sha or not same_source:
         status = "INCOMPARABLE_SOURCE_IDENTITY"
-    elif config_status == "INCOMPARABLE_DERIVATION_CONFIGURATION":
-        status = config_status
+    elif config_status != "EXACT_CONFIG_MATCH":
+        # Historical runs lacking a recorded configuration are comparable only
+        # as observations, not evidence of same-configuration repeatability.
+        status = "INCOMPARABLE_DERIVATION_CONFIGURATION"
     else:
         status = "PENDING_COMPARISON"
     diffs: dict[str, object] = {}
@@ -126,8 +141,8 @@ def compare(left: dict, right: dict) -> dict:
         "derivation_config_status": config_status,
         "bounded_signer_claims_present": identity_ok,
         "donor_sha256": left["donor_sha256"] if same_sha else None,
-        "left_decompiler_status": (left["receipt"].get("decompiler_qualification") or {}).get("status"),
-        "right_decompiler_status": (right["receipt"].get("decompiler_qualification") or {}).get("status"),
+        "left_decompiler_status": _safe_jadx_status(left["receipt"]),
+        "right_decompiler_status": _safe_jadx_status(right["receipt"]),
         "observed_differences": diffs,
         "qualified_full_coverage": False,
         "promotion_authorized": False,

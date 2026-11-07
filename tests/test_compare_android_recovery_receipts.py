@@ -10,9 +10,10 @@ from zipfile import ZipFile
 from tools.compare_android_recovery_receipts import compare, load_evidence
 
 SHA = "a" * 64
+DEFAULT_CONFIG = {"jadx_version": "1.5.6", "threads_count": 4}
 
 
-def make_zip(path, *, sha=SHA, files=10, marker=2, verified=True, source="apkpure", extra=None, extra_feature_key=None, config=None):
+def make_zip(path, *, sha=SHA, files=10, marker=2, verified=True, source="apkpure", extra=None, extra_feature_key=None, config=DEFAULT_CONFIG):
     receipt = {
         "schema": "aar-chatgpt-public-recovery-receipt/v1",
         "package_id": "com.openai.chatgpt",
@@ -76,7 +77,7 @@ class RepeatabilityTests(unittest.TestCase):
         self.assertFalse(r["promotion_authorized"])
 
     def test_one_missing_configuration_is_not_repeatability_claim(self):
-        make_zip(self.a)
+        make_zip(self.a, config=None)
         make_zip(self.b, config={"threads_count": 1})
         self.assertEqual(self.score()["status"], "INCOMPARABLE_DERIVATION_CONFIGURATION")
 
@@ -87,6 +88,36 @@ class RepeatabilityTests(unittest.TestCase):
         r = self.score()
         self.assertEqual(r["derivation_config_status"], "EXACT_CONFIG_MATCH")
         self.assertEqual(r["status"], "SAME_DONOR_DERIVATION_DRIFT")
+
+    def test_both_unrecorded_configs_cannot_assert_repeatability(self):
+        make_zip(self.a, config=None)
+        make_zip(self.b, config=None)
+        r = self.score()
+        self.assertEqual(r["derivation_config_status"], "BOTH_UNRECORDED")
+        self.assertEqual(r["status"], "INCOMPARABLE_DERIVATION_CONFIGURATION")
+        self.assertEqual(r["observed_differences"], {})
+
+    def test_decompiler_status_cannot_leak_unreviewed_text(self):
+        make_zip(self.a)
+        make_zip(self.b)
+        left = load_evidence(self.a)
+        right = load_evidence(self.b)
+        left["receipt"]["decompiler_qualification"]["status"] = "private-token://unreviewed"
+        self.assertEqual(compare(left, right)["left_decompiler_status"], "UNREVIEWED_JADX_STATUS")
+
+    def test_boolean_files_scanned_not_admitted_as_count(self):
+        make_zip(self.a)
+        with ZipFile(self.a) as f:
+            a=json.loads(f.read("receipt.json"))
+            b=json.loads(f.read("derived-surface.json"))
+            c=f.read("selected-archive-sha256.txt")
+        b["files_scanned"]=True
+        with ZipFile(self.a, "w") as f:
+            f.writestr("receipt.json", json.dumps(a))
+            f.writestr("derived-surface.json", json.dumps(b))
+            f.writestr("selected-archive-sha256.txt", c)
+        with self.assertRaisesRegex(ValueError, "invalid files_scanned"):
+            load_evidence(self.a)
 
     def test_different_original_is_incomparable(self):
         make_zip(self.a); make_zip(self.b, sha="b" * 64)
