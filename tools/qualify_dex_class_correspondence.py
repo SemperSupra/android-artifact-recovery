@@ -15,7 +15,7 @@ import re
 import struct
 import zipfile
 
-from tools.qualify_dex_header_inventory import read_header, MAX_DEX_BYTES
+from tools.qualify_dex_header_inventory import read_header, MAX_DEX_BYTES, census
 
 MAX_CLASSES = 200_000
 MAX_DESCR_BYTES = 4_096
@@ -124,6 +124,14 @@ def qualify_dex(dex: bytes, output_sources: Path) -> dict:
 def evaluate(apk: Path, jadx_root: Path, targets: tuple[str,...]) -> dict:
     if not 1<=len(targets)<=2 or len(set(targets))!=len(targets):
         raise ValueError("only 1-2 distinct DEX targets permitted")
+    # Verify the *whole* signed archive's root-Dex presence, contiguity,
+    # duplicate member bounds and actual DEX headers before resolving
+    # filenames through a ZIP library that otherwise selects the last
+    # occurrence of duplicate member names.
+    root_census=census(apk)
+    verified_names={x["root_dex_name"] for x in root_census["dex_headers"]}
+    if not set(targets).issubset(verified_names):
+        raise ValueError("target missing from verified original DEX census")
     results=[]
     with zipfile.ZipFile(apk) as z:
         for name in targets:

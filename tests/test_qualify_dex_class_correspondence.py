@@ -72,6 +72,18 @@ class ClassCorrespondenceTests(unittest.TestCase):
             self.assertEqual(r["observed_correspondence"]["invalid_ascii_descriptor"],1)
             self.assertNotIn("private",json.dumps(r))
 
+    def test_duplicate_signed_archive_dex_name_refused_before_lookup(self):
+        import warnings
+        with tempfile.TemporaryDirectory() as td:
+            p=Path(td)/"dup.apk"
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore",UserWarning)
+                with zipfile.ZipFile(p,"w") as z:
+                    z.writestr("classes.dex",make_dex(["Lcom/unit/A;"]))
+                    z.writestr("classes.dex",make_dex(["Lcom/unit/B;"]))
+            with self.assertRaisesRegex(ValueError,"duplicate"):
+                evaluate(p,Path(td),("classes.dex",))
+
     def test_uleb_truncation_and_bad_target_abstain(self):
         with self.assertRaisesRegex(ValueError,"truncated"):
             _uleb(b"\x80",0)
