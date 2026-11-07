@@ -1,0 +1,57 @@
+name: Qualify ChatGPT Android recovery source-only contracts
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - '.github/workflows/chatgpt-android-source-contract.yml'
+      - '.github/workflows/recover-chatgpt-public.yml'
+      - 'tools/summarize_android_surface.py'
+      - 'tools/qualify_jadx_log.py'
+      - 'tools/qualify_android_abi.py'
+      - 'tools/compare_android_recovery_receipts.py'
+      - 'tools/select_chatgpt_android_donor.py'
+      - 'tools/qualify_dex_header_inventory.py'
+      - 'tools/run_sharded_jadx.py'
+      - 'tools/qualify_dex_class_correspondence.py'
+      - 'tests/test_qualify_dex_class_correspondence.py'
+      - 'tests/test_run_sharded_jadx.py'
+      - 'tests/test_qualify_dex_header_inventory.py'
+      - 'tests/test_summarize_android_surface_routes.py'
+      - 'tests/test_qualify_jadx_log.py'
+      - 'tests/test_qualify_android_abi.py'
+      - 'tests/test_compare_android_recovery_receipts.py'
+      - 'tests/test_select_chatgpt_android_donor.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  source-only:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 / Node24
+        with:
+          persist-credentials: false
+      - name: Compile source and execute source-owned synthetic controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile tools/summarize_android_surface.py tools/qualify_jadx_log.py tools/qualify_android_abi.py tools/compare_android_recovery_receipts.py tools/select_chatgpt_android_donor.py tools/qualify_dex_header_inventory.py tools/run_sharded_jadx.py tools/qualify_dex_class_correspondence.py
+          python3 -m unittest -v tests.test_summarize_android_surface_routes tests.test_qualify_jadx_log tests.test_qualify_android_abi tests.test_compare_android_recovery_receipts tests.test_select_chatgpt_android_donor tests.test_qualify_dex_header_inventory tests.test_run_sharded_jadx tests.test_qualify_dex_class_correspondence
+          python3 -m tools.run_sharded_jadx --help > /dev/null
+          python3 -m tools.qualify_dex_class_correspondence --help > /dev/null
+      - name: Confirm no original donor acquisition
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e chatgpt.xapk
+          test ! -d out/chatgpt
+          echo 'SOURCE_ONLY_ANDROID_CONTRACT_PASS, not original code or runtime qualification'

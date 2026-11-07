@@ -1,0 +1,332 @@
+name: Recover public ChatGPT Android archive
+
+on:
+  pull_request:
+    paths:
+      - tools/summarize_android_surface.py
+      - tests/test_summarize_android_surface_routes.py
+      - tools/qualify_jadx_log.py
+      - tests/test_qualify_jadx_log.py
+      - tools/qualify_android_abi.py
+      - tests/test_qualify_android_abi.py
+      - tools/compare_android_recovery_receipts.py
+      - tools/select_chatgpt_android_donor.py
+      - tools/run_sharded_jadx.py
+      - tools/qualify_dex_class_correspondence.py
+      - tests/test_qualify_dex_class_correspondence.py
+      - tests/test_run_sharded_jadx.py
+      - tests/test_compare_android_recovery_receipts.py
+      - tests/test_select_chatgpt_android_donor.py
+      - .github/workflows/recover-chatgpt-public.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# An updated PR supersedes its in-progress donor rep; manual dispatch
+# retains a unique run ID and is never canceled by a newer PR head.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  # PR path filters evaluate the entire diff, so a docs-only new PR head
+  # can launch a cheap admission job. Never let that admission cancel an
+  # in-progress, expensive donor acquisition from the previous head.
+  # The guarded admit job decides whether *new* work is worth executing.
+  cancel-in-progress: false
+
+jobs:
+  admit:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      acquire: ${{ steps.select.outputs.acquire }}
+      reason: ${{ steps.select.outputs.reason }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 / Node24
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Qualify conservative incremental donor admission
+        id: select
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_select_chatgpt_android_donor
+          python3 tools/select_chatgpt_android_donor.py
+
+  acquire-and-characterize:
+    needs: admit
+    # The source-only workflow supplies separate exact-head evidence when donor
+    # acquisition is skipped; skip is not original application qualification.
+    if: needs.admit.outputs.acquire == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      PACKAGE_ID: com.openai.chatgpt
+      EXPECTED_SIGNER_SHA256: b24f4bfbb3cf293f938703b9d87027c1102cc36dc4fa206910e08927db40473c
+      APKEEP_VERSION: 1.0.0
+      APKEEP_SHA256: a23579a3ba366d25a6d69848189b983d65662f4ecf4b9e11e16510811659de4e
+      JUSTAPK_COMMIT: fa29784143085163893fac7056f080d961dc505b
+      JADX_SHA256: 545ea2be9c242511bc145755cf4bda2485ade42966e096f8b4d3da2a230e8974
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 / Node 24
+        with:
+          persist-credentials: false
+
+      - name: Validate public-safe scanner regression controls
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_summarize_android_surface_routes tests.test_qualify_jadx_log tests.test_qualify_android_abi tests.test_compare_android_recovery_receipts tests.test_qualify_dex_header_inventory tests.test_run_sharded_jadx tests.test_qualify_dex_class_correspondence
+          python3 -m tools.run_sharded_jadx --help > /dev/null
+
+      - name: Install pinned apkeep
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 \
+            "https://github.com/EFForg/apkeep/releases/download/${APKEEP_VERSION}/apkeep-x86_64-unknown-linux-gnu" \
+            -o "$RUNNER_TEMP/apkeep"
+          echo "${APKEEP_SHA256}  $RUNNER_TEMP/apkeep" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/apkeep"
+          "$RUNNER_TEMP/apkeep" --version
+
+      - name: Observe APKPure lineage and acquire latest available arm64 archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/acq-apkpure" out/chatgpt
+          "$RUNNER_TEMP/apkeep" -l -a "$PACKAGE_ID" -d apk-pure \
+            -o 'arch=arm64-v8a,output_format=json' | tee out/chatgpt/apkpure-versions.json
+          "$RUNNER_TEMP/apkeep" -a "$PACKAGE_ID" -d apk-pure \
+            -o 'arch=arm64-v8a' "$RUNNER_TEMP/acq-apkpure"
+          artifact="$(find "$RUNNER_TEMP/acq-apkpure" -maxdepth 1 -type f \( -name '*.apk' -o -name '*.xapk' \) -print -quit)"
+          test -n "$artifact"
+          echo "APKPURE_ARTIFACT=$artifact" >> "$GITHUB_ENV"
+          sha256sum "$artifact" | tee out/chatgpt/apkpure-archive-sha256.txt
+          printf '{"source":"APKPure via pinned EFF apkeep","package_id":"%s","artifact_name":"%s","artifact_size_bytes":%s}\n' \
+            "$PACKAGE_ID" "$(basename "$artifact")" "$(stat -c %s "$artifact")" > out/chatgpt/apkpure-acquisition-source.json
+
+      - name: Verify source and fail over to independent Uptodown acquisition when needed
+        shell: bash
+        run: |
+          set -euo pipefail
+          apksigner="$(find "${ANDROID_HOME:-/usr/local/lib/android/sdk}/build-tools" -type f -name apksigner | sort -V | tail -n1)"
+          aapt="$(find "${ANDROID_HOME:-/usr/local/lib/android/sdk}/build-tools" -type f -name aapt | sort -V | tail -n1)"
+          test -x "$apksigner" && test -x "$aapt"
+
+          verify_candidate() {
+            local artifact="$1"
+            local source_id="$2"
+            local unpacked="$RUNNER_TEMP/unpacked-$source_id"
+            local signer_file="out/chatgpt/signers-$source_id.txt"
+            local package_file="out/chatgpt/package-$source_id.txt"
+            rm -rf "$unpacked"
+            mkdir -p "$unpacked"
+            case "$artifact" in
+              *.xapk|*.zip) unzip -q "$artifact" -d "$unpacked" ;;
+              *.apk) cp "$artifact" "$unpacked/base.apk" ;;
+              *) printf 'unsupported artifact: %s\n' "$artifact" >&2; return 2 ;;
+            esac
+
+            : > "$signer_file"
+            local mismatch=0
+            local count=0
+            while IFS= read -r apk; do
+              count=$((count + 1))
+              set +e
+              report="$("$apksigner" verify --print-certs "$apk" 2>&1)"
+              verify_rc=$?
+              set -e
+              digest="$(printf '%s\n' "$report" | grep -Eim1 'certificate[[:space:]]+SHA-256[[:space:]]+digest' | sed -E 's/.*digest:[[:space:]]*//' | tr '[:upper:]' '[:lower:]' | tr -d ':[:space:]')"
+              if [ "$verify_rc" -ne 0 ] || [ -z "$digest" ] || [ "$digest" != "$EXPECTED_SIGNER_SHA256" ]; then
+                mismatch=1
+              fi
+              printf '%s\tverify_rc=%s\tsha256=%s\texpected=%s\n' \
+                "$(basename "$apk")" "$verify_rc" "${digest:-MISSING}" "$EXPECTED_SIGNER_SHA256" >> "$signer_file"
+            done < <(find "$unpacked" -type f -name '*.apk' | sort)
+            test "$count" -gt 0
+
+            base="$(find "$unpacked" -type f -name 'com.openai.chatgpt.apk' -print -quit)"
+            if [ -z "$base" ]; then base="$(find "$unpacked" -type f -name 'base.apk' -print -quit)"; fi
+            if [ -z "$base" ]; then base="$(find "$unpacked" -type f -name '*.apk' -print -quit)"; fi
+            test -n "$base"
+            badging="$("$aapt" dump badging "$base" | head -n 1)"
+            printf '%s\n' "$badging" | tee "$package_file"
+            if ! printf '%s\n' "$badging" | grep -q "name='$PACKAGE_ID'"; then
+              mismatch=1
+            fi
+
+            if [ "$mismatch" -eq 0 ]; then
+              printf '%s\n' "$artifact" > "$RUNNER_TEMP/selected-artifact"
+              printf '%s\n' "$base" > "$RUNNER_TEMP/selected-base"
+              printf '%s\n' "$source_id" > "$RUNNER_TEMP/selected-source"
+              return 0
+            fi
+            return 1
+          }
+
+          if verify_candidate "$APKPURE_ARTIFACT" apkpure; then
+            echo "APKPure candidate matched the official signing identity."
+          else
+            echo "APKPure candidate did not pass the signing/package gate; trying Uptodown independently."
+            python3 -m pip install --disable-pip-version-check \
+              "git+https://github.com/TheQmaks/justapk.git@${JUSTAPK_COMMIT}"
+            mkdir -p "$RUNNER_TEMP/acq-uptodown"
+            justapk download "$PACKAGE_ID" -s uptodown --no-convert -o "$RUNNER_TEMP/acq-uptodown" \
+              | tee out/chatgpt/uptodown-download.json
+            uptodown="$(find "$RUNNER_TEMP/acq-uptodown" -type f \( -name '*.apk' -o -name '*.xapk' \) -print -quit)"
+            test -n "$uptodown"
+            sha256sum "$uptodown" | tee out/chatgpt/uptodown-archive-sha256.txt
+            if ! verify_candidate "$uptodown" uptodown; then
+              echo "Neither independently acquired candidate passed the official signing/package gate." >&2
+              exit 1
+            fi
+            echo "Uptodown candidate matched the official signing identity."
+          fi
+
+          artifact="$(cat "$RUNNER_TEMP/selected-artifact")"
+          base="$(cat "$RUNNER_TEMP/selected-base")"
+          source_id="$(cat "$RUNNER_TEMP/selected-source")"
+          echo "ARTIFACT=$artifact" >> "$GITHUB_ENV"
+          echo "BASE_APK=$base" >> "$GITHUB_ENV"
+          echo "SELECTED_SOURCE=$source_id" >> "$GITHUB_ENV"
+          printf '{"selected_source":"%s","package_id":"%s","official_signer_sha256":"%s","artifact_name":"%s","artifact_size_bytes":%s}\n' \
+            "$source_id" "$PACKAGE_ID" "$EXPECTED_SIGNER_SHA256" "$(basename "$artifact")" "$(stat -c %s "$artifact")" \
+            > out/chatgpt/selected-source.json
+
+      - name: Characterize verified container and code-bearing entries
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/characterize_android_artifact.py "$ARTIFACT" \
+            --out out/chatgpt/artifact-characterization.json
+          sha256sum "$ARTIFACT" | tee out/chatgpt/selected-archive-sha256.txt
+
+      - name: Install digest-verified JADX and derive bounded behavior surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 \
+            https://github.com/skylot/jadx/releases/download/v1.5.6/jadx-1.5.6.zip \
+            -o "$RUNNER_TEMP/jadx.zip"
+          echo "${JADX_SHA256}  $RUNNER_TEMP/jadx.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/jadx.zip" -d "$RUNNER_TEMP/jadx"
+          aapt="$(find "${ANDROID_HOME:-/usr/local/lib/android/sdk}/build-tools" -type f -name aapt | sort -V | tail -n1)"
+          "$aapt" dump badging "$BASE_APK" > out/chatgpt/base-badging-full.txt
+          "$aapt" dump permissions "$BASE_APK" > out/chatgpt/base-permissions.txt
+          apkanalyzer="$(find "${ANDROID_HOME:-/usr/local/lib/android/sdk}" -type f -name apkanalyzer -print -quit || true)"
+          aapt="$(find "${ANDROID_HOME:-/usr/local/lib/android/sdk}/build-tools" -type f -name aapt | sort -V | tail -n1)"
+          test -x "$aapt"
+          "$aapt" dump permissions "$BASE_APK" > "$RUNNER_TEMP/permissions.txt"
+          if [ -x "$apkanalyzer" ]; then
+            "$apkanalyzer" manifest print "$BASE_APK" > "$RUNNER_TEMP/AndroidManifest.xml"
+          else
+            "$aapt" dump xmltree "$BASE_APK" AndroidManifest.xml > "$RUNNER_TEMP/AndroidManifest.xml"
+          fi
+          # Independent DEX table cardinality witness from the same signed
+          # base APK; no code, strings or classes are published.
+          python3 tools/qualify_dex_header_inventory.py --apk "$BASE_APK" \
+            --output out/chatgpt/dex-header-census.json
+          # R026 one-variable experimental change: JADX --rename-flags none
+          # for the same two selected fallback DEXs. Retain thread, heap,
+          # timeout and signed original source. Raw output remains non-promoting.
+          python3 -m tools.run_sharded_jadx --apk "$BASE_APK" \
+            --jadx "$RUNNER_TEMP/jadx/bin/jadx" \
+            --output "$RUNNER_TEMP/jadx-out" \
+            --receipt out/chatgpt/dex-shard-status.json --seconds 150 \
+            --mode fallback --target classes3.dex --target classes7.dex
+          test -d "$RUNNER_TEMP/jadx-out"
+          # Independent bytecode class descriptor -> generated path
+          # correspondence, aggregate-only; not semantic code coverage.
+          python3 -m tools.qualify_dex_class_correspondence --apk "$BASE_APK" \
+            --jadx-root "$RUNNER_TEMP/jadx-out" \
+            --output out/chatgpt/dex-class-correspondence.json \
+            --target classes3.dex --target classes7.dex
+          python3 tools/summarize_android_surface.py \
+            --jadx-root "$RUNNER_TEMP/jadx-out" \
+            --manifest "$RUNNER_TEMP/AndroidManifest.xml" \
+            --permissions out/chatgpt/base-permissions.txt \
+            --max-files 100000 \
+            --out out/chatgpt/derived-surface.json
+
+      - name: Emit public-safe acquisition receipt
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, pathlib
+          from tools.qualify_jadx_log import qualify_jadx_log
+          from tools.qualify_android_abi import qualify_native_abi
+          root=pathlib.Path("out/chatgpt")
+          # This receipt must be emitted even when an early synthetic check
+          # fails before the acquisition step creates out/chatgpt.
+          root.mkdir(parents=True,exist_ok=True)
+          def load(name):
+              p=root/name
+              try: return json.loads(p.read_text())
+              except Exception: return None
+          char=load("artifact-characterization.json")
+          selected=load("selected-source.json")
+          jadx_status_path=root/"jadx-status.txt"
+          jadx=qualify_jadx_log(jadx_status_path.read_text(errors="replace") if jadx_status_path.exists() else "")
+          shard=load("dex-shard-status.json")
+          if isinstance(shard,dict) and shard.get("schema")=="aar-jadx-sharded-static-diagnostic/v1":
+              entries=shard.get("shards") or []
+              counted=[e.get("reported_error_count") for e in entries if isinstance(e,dict)]
+              known_errors=[x for x in counted if type(x) is int and x>=0]
+              jadx={
+                "status":shard.get("status"),
+                "exit_code":None,
+                "reported_error_count":sum(known_errors) if len(known_errors)==len(entries) else None,
+                "total_java_files_observed":shard.get("total_java_files_observed"),
+                "root_dex_count":shard.get("root_dex_count"),
+                "original_root_dex_count":shard.get("original_root_dex_count"),
+                "evidence_grade":shard.get("evidence_grade"),
+                "mode":shard.get("mode"),
+                "failed_shard_count":shard.get("failed_shard_count"),
+                "heap_oom_shards":shard.get("heap_oom_shards"),
+                "timed_out_shards":shard.get("timed_out_shards"),
+                "full_class_coverage_verified":False,
+                "claim_boundary":"Only two source-bounded DEX fallback raw-instruction observations; NOT all-class source, API or runtime verification."
+              }
+          abi=qualify_native_abi(char, "arm64-v8a")
+          receipt={
+            "schema":"aar-chatgpt-public-recovery-receipt/v1",
+            "package_id":"com.openai.chatgpt",
+            "selected_source": (selected or {}).get("selected_source"),
+            "official_signer_verified": bool(selected),
+            "artifact_characterization_summary": (char or {}).get("summary"),
+            "derived_surface_present": (root/"derived-surface.json").is_file(),
+            "decompiler_qualification": jadx,
+            "derivation_config": {
+              "jadx_version":"1.5.6", "threads_count":1,
+              "flags":["--no-res","--no-imports","--show-bad-code","--decompilation-mode","fallback","--rename-flags","none"],
+              "jadx_archive_sha256":"545ea2be9c242511bc145755cf4bda2485ade42966e096f8b4d3da2a230e8974",
+              "surface_schema":"aar-derived-android-surface/v2",
+              "strategy":"targeted-fallback-no-rename-v2",
+              "target_dex_names":["classes3.dex","classes7.dex"],
+              "heap_max":"4g", "timeout_per_shard_seconds":150
+            },
+            "native_abi_qualification": abi,
+            "full_code_recovery_claimed": False,
+            "proprietary_bytes_published": False,
+            "claim_boundary":"Public artifact contains only bounded derived metadata; no APK/XAPK or decompiled source is retained."
+          }
+          (root/"receipt.json").write_text(json.dumps(receipt,indent=2,sort_keys=True)+"\n")
+          PY
+
+      - name: Redact transient proprietary material
+        if: always()
+        shell: bash
+        run: |
+          rm -rf "$RUNNER_TEMP/acq-apkpure" "$RUNNER_TEMP/acq-uptodown" "$RUNNER_TEMP/unpacked-apkpure" \
+            "$RUNNER_TEMP/unpacked-uptodown" "$RUNNER_TEMP/jadx-out" "$RUNNER_TEMP/AndroidManifest.xml" "$RUNNER_TEMP/permissions.txt" || true
+
+      - name: Publish derived recovery receipt only
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6 / Node 24
+        with:
+          name: chatgpt-android-derived-recovery
+          path: out/chatgpt/
+          if-no-files-found: error
+          retention-days: 7
