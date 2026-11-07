@@ -25,7 +25,11 @@ permissions:
 # retains a unique run ID and is never canceled by a newer PR head.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # PR path filters evaluate the entire diff, so a docs-only new PR head
+  # can launch a cheap admission job. Never let that admission cancel an
+  # in-progress, expensive donor acquisition from the previous head.
+  # The guarded admit job decides whether *new* work is worth executing.
+  cancel-in-progress: false
 
 jobs:
   admit:
