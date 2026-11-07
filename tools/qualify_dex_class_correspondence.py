@@ -124,6 +124,9 @@ def qualify_dex(dex: bytes, output_sources: Path) -> dict:
 def evaluate(apk: Path, jadx_root: Path, targets: tuple[str,...]) -> dict:
     if not 1<=len(targets)<=2 or len(set(targets))!=len(targets):
         raise ValueError("only 1-2 distinct DEX targets permitted")
+    # Reject untrusted target paths before even opening an archive.
+    if any(not re.fullmatch(r"classes(?:[2-9][0-9]*)?\\.dex",name) for name in targets):
+        raise ValueError("unreviewed DEX target name")
     # Verify the *whole* signed archive's root-Dex presence, contiguity,
     # duplicate member bounds and actual DEX headers before resolving
     # filenames through a ZIP library that otherwise selects the last
