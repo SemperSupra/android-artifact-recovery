@@ -68,7 +68,10 @@ jobs:
           persist-credentials: false
 
       - name: Validate public-safe scanner regression controls
-        run: python3 -m unittest -v tests.test_summarize_android_surface_routes tests.test_qualify_jadx_log tests.test_qualify_android_abi tests.test_compare_android_recovery_receipts tests.test_qualify_dex_header_inventory tests.test_run_sharded_jadx
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_summarize_android_surface_routes tests.test_qualify_jadx_log tests.test_qualify_android_abi tests.test_compare_android_recovery_receipts tests.test_qualify_dex_header_inventory tests.test_run_sharded_jadx
+          python3 -m tools.run_sharded_jadx --help > /dev/null
 
       - name: Install pinned apkeep
         shell: bash
@@ -221,7 +224,7 @@ jobs:
           # Avoid the 5 GiB monolithic JADX OOM on the nine-DEX original.
           # This tool invokes only pinned JADX, in bounded independent processes
           # with isolated outputs; it never executes APK application code.
-          python3 tools/run_sharded_jadx.py --apk "$BASE_APK" \
+          python3 -m tools.run_sharded_jadx --apk "$BASE_APK" \
             --jadx "$RUNNER_TEMP/jadx/bin/jadx" \
             --output "$RUNNER_TEMP/jadx-out" \
             --receipt out/chatgpt/dex-shard-status.json --seconds 120
