@@ -57,7 +57,7 @@ def _run_one(jadx: Path, dex: Path, output: Path, logfile: Path,
         try:
             proc = subprocess.Popen(
                 [str(jadx), "--threads-count", "1", "--no-res", "--no-imports",
-                 "--show-bad-code"] + (["--decompilation-mode", "fallback"]
+                 "--show-bad-code"] + (["--decompilation-mode", "fallback", "--rename-flags", "none"]
                  if mode == "fallback" else []) + ["-d", str(output), str(dex)],
                 stdout=stream, stderr=subprocess.STDOUT, env=env,
                 start_new_session=True,

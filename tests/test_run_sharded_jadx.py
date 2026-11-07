@@ -18,6 +18,7 @@ def fake_tool(path):
         "source=pathlib.Path(sys.argv[-1])\n"
         "(output/'sources').mkdir(parents=True,exist_ok=True)\n"
         "(output/'sources'/'Synthetic.java').write_text('// synthetic fixture only')\n"
+        "(output/'invocation.txt').write_text(' '.join(sys.argv))\n"
         "print('ERROR - finished with errors, count: 1' if source.name=='classes2.dex' else '')\n"
         "sys.exit(3 if source.name=='classes2.dex' else 0)\n"
     )
@@ -65,6 +66,9 @@ class ShardJadxTests(unittest.TestCase):
             self.assertEqual(result["status"],"JADX_TARGETED_FALLBACK_PARTIAL_EVIDENCE")
             self.assertEqual(result["evidence_grade"],"FALLBACK_RAW_INSTRUCTION_RENDERING")
             self.assertNotIn("Synthetic.java",(root/"receipt.json").read_text())
+            invocation=(root/"fallback"/"shard-02"/"invocation.txt").read_text()
+            self.assertIn("--decompilation-mode fallback",invocation)
+            self.assertIn("--rename-flags none",invocation)
 
     def test_fallback_scope_abstains_for_missing_duplicate_and_injection(self):
         with tempfile.TemporaryDirectory() as td:

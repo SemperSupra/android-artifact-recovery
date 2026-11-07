@@ -227,9 +227,9 @@ jobs:
           # base APK; no code, strings or classes are published.
           python3 tools/qualify_dex_header_inventory.py --apk "$BASE_APK" \
             --output out/chatgpt/dex-header-census.json
-          # R024 fallback-targeted re-run: only classes3 (timeout) and
-          # classes7 (OOM); fallback is RAW INSTRUCTION evidence, not
-          # comparable to previous structured decompiler source file counts.
+          # R026 one-variable experimental change: JADX --rename-flags none
+          # for the same two selected fallback DEXs. Retain thread, heap,
+          # timeout and signed original source. Raw output remains non-promoting.
           python3 -m tools.run_sharded_jadx --apk "$BASE_APK" \
             --jadx "$RUNNER_TEMP/jadx/bin/jadx" \
             --output "$RUNNER_TEMP/jadx-out" \
@@ -300,10 +300,10 @@ jobs:
             "decompiler_qualification": jadx,
             "derivation_config": {
               "jadx_version":"1.5.6", "threads_count":1,
-              "flags":["--no-res","--no-imports","--show-bad-code","--decompilation-mode","fallback"],
+              "flags":["--no-res","--no-imports","--show-bad-code","--decompilation-mode","fallback","--rename-flags","none"],
               "jadx_archive_sha256":"545ea2be9c242511bc145755cf4bda2485ade42966e096f8b4d3da2a230e8974",
               "surface_schema":"aar-derived-android-surface/v2",
-              "strategy":"targeted-fallback-shards-v1",
+              "strategy":"targeted-fallback-no-rename-v2",
               "target_dex_names":["classes3.dex","classes7.dex"],
               "heap_max":"4g", "timeout_per_shard_seconds":150
             },
