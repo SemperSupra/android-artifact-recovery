@@ -34,6 +34,7 @@ class AndroidDonorAdmissionTests(unittest.TestCase):
                      "tools/qualify_jadx_log.py", "tools/qualify_android_abi.py",
                      "tools/qualify_dex_header_inventory.py",
                      "tools/run_sharded_jadx.py",
+                     "tools/qualify_dex_class_correspondence.py",
                      ".github/workflows/recover-chatgpt-public.yml"):
             with self.subTest(name=name), patch(
                 "tools.select_chatgpt_android_donor.subprocess.run",

@@ -22,6 +22,7 @@ ACQUISITION_INPUTS = frozenset({
     "tools/qualify_android_abi.py",
     "tools/qualify_dex_header_inventory.py",
     "tools/run_sharded_jadx.py",
+    "tools/qualify_dex_class_correspondence.py",
 })
 
 

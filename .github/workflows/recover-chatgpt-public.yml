@@ -12,6 +12,8 @@ on:
       - tools/compare_android_recovery_receipts.py
       - tools/select_chatgpt_android_donor.py
       - tools/run_sharded_jadx.py
+      - tools/qualify_dex_class_correspondence.py
+      - tests/test_qualify_dex_class_correspondence.py
       - tests/test_run_sharded_jadx.py
       - tests/test_compare_android_recovery_receipts.py
       - tests/test_select_chatgpt_android_donor.py
@@ -74,7 +76,7 @@ jobs:
       - name: Validate public-safe scanner regression controls
         run: |
           set -euo pipefail
-          python3 -m unittest -v tests.test_summarize_android_surface_routes tests.test_qualify_jadx_log tests.test_qualify_android_abi tests.test_compare_android_recovery_receipts tests.test_qualify_dex_header_inventory tests.test_run_sharded_jadx
+          python3 -m unittest -v tests.test_summarize_android_surface_routes tests.test_qualify_jadx_log tests.test_qualify_android_abi tests.test_compare_android_recovery_receipts tests.test_qualify_dex_header_inventory tests.test_run_sharded_jadx tests.test_qualify_dex_class_correspondence
           python3 -m tools.run_sharded_jadx --help > /dev/null
 
       - name: Install pinned apkeep
@@ -234,6 +236,12 @@ jobs:
             --receipt out/chatgpt/dex-shard-status.json --seconds 150 \
             --mode fallback --target classes3.dex --target classes7.dex
           test -d "$RUNNER_TEMP/jadx-out"
+          # Independent bytecode class descriptor -> generated path
+          # correspondence, aggregate-only; not semantic code coverage.
+          python3 -m tools.qualify_dex_class_correspondence --apk "$BASE_APK" \
+            --jadx-root "$RUNNER_TEMP/jadx-out" \
+            --output out/chatgpt/dex-class-correspondence.json \
+            --target classes3.dex --target classes7.dex
           python3 tools/summarize_android_surface.py \
             --jadx-root "$RUNNER_TEMP/jadx-out" \
             --manifest "$RUNNER_TEMP/AndroidManifest.xml" \
