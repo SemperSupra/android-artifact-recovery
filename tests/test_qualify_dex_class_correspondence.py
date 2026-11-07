@@ -60,7 +60,7 @@ class ClassCorrespondenceTests(unittest.TestCase):
 
     def test_bad_type_and_string_indices_fail_closed(self):
         base=make_dex(["Lcom/unit/A;"])
-        for offset,value in ((128,99),(116,99),(112,10**6)):
+        for offset,value in ((120,99),(116,99),(112,10**6)):
             with self.subTest(offset=offset):
                 raw=bytearray(base);struct.pack_into("<I",raw,offset,value)
                 with self.assertRaises(ValueError):
