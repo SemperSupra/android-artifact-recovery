@@ -65,8 +65,9 @@ class ShardJadxTests(unittest.TestCase):
             self.assertEqual(result["all_original_dex_method_ids"],15)
             self.assertEqual(result["status"],"JADX_TARGETED_FALLBACK_PARTIAL_EVIDENCE")
             self.assertEqual(result["evidence_grade"],"FALLBACK_RAW_INSTRUCTION_RENDERING")
+            self.assertEqual(result["fallback_renaming_policy"],"none")
             self.assertNotIn("Synthetic.java",(root/"receipt.json").read_text())
-            invocation=(root/"fallback"/"shard-02"/"invocation.txt").read_text()
+            invocation=(root/"outputs"/"shard-02"/"invocation.txt").read_text()
             self.assertIn("--decompilation-mode fallback",invocation)
             self.assertIn("--rename-flags none",invocation)
 

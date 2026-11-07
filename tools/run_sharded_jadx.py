@@ -149,6 +149,7 @@ def run(apk: Path, jadx: Path, out_root: Path, receipt: Path,
                   ("JADX_SHARDED_EXIT_ZERO_COVERAGE_UNVERIFIED"
                    if fail_count == 0 else "JADX_SHARDED_PARTIAL_EVIDENCE")),
         "mode":mode,
+        "fallback_renaming_policy":("none" if mode == "fallback" else "default"),
         "original_root_dex_count":descriptor["root_dex_count"],
         "selected_dex_names":sorted(selected),
         "evidence_grade":("FALLBACK_RAW_INSTRUCTION_RENDERING" if mode == "fallback"
